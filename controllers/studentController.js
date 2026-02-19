@@ -37,12 +37,17 @@ async function getStudentDetails(req, res) {
             .eq('user_id', id)
             .single();
 
-        // 3. Fetch Certificates (Assets)
-        const { data: certificates } = await supabase
+        // 3. Fetch Certificates (Assets) joined with NFT data
+        const { data: certsData } = await supabase
             .from('certificates')
-            .select('*')
+            .select('*, nft:nfts(token_id)')
             .eq('recipient_id', id)
             .order('issue_date', { ascending: false });
+
+        const certificates = (certsData || []).map(c => ({
+            ...c,
+            token_id: c.nft?.token_id || null
+        }));
 
         // 4. Fetch Activity Logs (Actions performed BY the student)
         const { data: logs } = await supabase
