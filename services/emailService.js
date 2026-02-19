@@ -4,12 +4,14 @@
  */
 const nodemailer = require('nodemailer');
 
-// Create reusable transporter using Gmail SMTP
+// Create reusable transporter using generic SMTP or Gmail
 const transporter = nodemailer.createTransport({
-    service: 'gmail',
+    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+    port: parseInt(process.env.SMTP_PORT) || 587,
+    secure: process.env.SMTP_SECURE === 'true', // true for 465, false for 587
     auth: {
-        user: process.env.GMAIL_USER,
-        pass: process.env.GMAIL_APP_PASSWORD  // Use App Password, not regular password
+        user: process.env.SMTP_USER || process.env.GMAIL_USER,
+        pass: process.env.SMTP_PASS || process.env.GMAIL_APP_PASSWORD
     }
 });
 

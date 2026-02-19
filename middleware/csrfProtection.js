@@ -37,8 +37,8 @@ function csrfTokenIssuer(req, res, next) {
         const token = generateToken();
         res.cookie(CSRF_COOKIE_NAME, token, {
             httpOnly: false, // Must be readable by JavaScript
-            secure: process.env.NODE_ENV === 'production', // HTTPS only in production
-            sameSite: 'strict', // Prevent cross-site cookie sending
+            secure: true, // Always true for Render/HTTPS
+            sameSite: 'none', // Allow cross-domain for dcivs.online and testing
             maxAge: 24 * 60 * 60 * 1000 // 24 hours
         });
     }
@@ -101,8 +101,8 @@ function getCsrfToken(req, res) {
     const token = generateToken();
     res.cookie(CSRF_COOKIE_NAME, token, {
         httpOnly: false,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'strict',
+        secure: true,
+        sameSite: 'none',
         maxAge: 24 * 60 * 60 * 1000
     });
     res.json({ csrfToken: token });
