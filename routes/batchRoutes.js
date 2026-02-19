@@ -11,6 +11,7 @@ const {
     batchRegisterStudents,
     getStudentTemplate
 } = require('../controllers/batchController');
+const { requireAdmin } = require('../middleware/authMiddleware');
 
 // Configure multer for CSV uploads
 const upload = multer({
@@ -31,6 +32,6 @@ router.get('/template/students', getStudentTemplate);
 
 // --- BATCH OPERATIONS (Admin only) ---
 // POST /api/batch/students - Bulk register students from CSV
-router.post('/students', authenticateToken, upload.single('file'), batchRegisterStudents);
+router.post('/students', authenticateToken, requireAdmin, upload.single('file'), batchRegisterStudents);
 
 module.exports = router;

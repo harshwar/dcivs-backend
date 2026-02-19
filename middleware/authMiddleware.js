@@ -14,13 +14,25 @@ function authenticateToken(req, res, next) {
     if (err) {
       return res.status(403).json({ error: 'Invalid or expired token.' });
     }
-    req.user = user; // { id, email }
+    req.user = user; // { id, email, role }
     next();
   });
 }
 
+/**
+ * Middleware: requireAdmin
+ * Restricts access to users with 'admin' or 'super_admin' roles.
+ */
+function requireAdmin(req, res, next) {
+    if (!req.user || (req.user.role !== 'admin' && req.user.role !== 'super_admin')) {
+        return res.status(403).json({ error: 'Access denied. Administrative privileges required.' });
+    }
+    next();
+}
+
 module.exports = {
   authenticateToken,
+  requireAdmin
 };
 
 

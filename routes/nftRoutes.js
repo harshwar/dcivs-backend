@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const { issueNFT } = require('../controllers/nftController');
-const { authenticateToken } = require('../middleware/authMiddleware');
+const { authenticateToken, requireAdmin } = require('../middleware/authMiddleware');
 const { mintLimiter } = require('../middleware/rateLimiter');
 
 // Configure multer with file size limit (5MB)
@@ -12,8 +12,8 @@ const upload = multer({
 });
 
 // POST /api/nft/issue
-// Authenticate token + rate limit minting (10/hour) + file upload
-router.post('/issue', authenticateToken, mintLimiter, upload.single('file'), issueNFT);
+// Authenticate token + admin role + rate limit minting (10/hour) + file upload
+router.post('/issue', authenticateToken, requireAdmin, mintLimiter, upload.single('file'), issueNFT);
 
 module.exports = router;
 

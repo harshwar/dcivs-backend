@@ -1,16 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../db');
-const { authenticateToken } = require('../middleware/authMiddleware');
+const { authenticateToken, requireAdmin } = require('../middleware/authMiddleware');
 
 // Middleware to ensure user is an admin
-const requireAdmin = async (req, res, next) => {
-    // authenticateToken already runs before this, populating req.user
-    if (!req.user || req.user.role !== 'admin') {
-        return res.status(403).json({ error: 'Access denied. Admins only.' });
-    }
-    next();
-};
+// (requireAdmin removed - now imported from shared middleware)
 
 /**
  * GET /api/admin/logs

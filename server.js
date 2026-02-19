@@ -24,7 +24,7 @@ const { createEncryptedWallet } = require("./services/walletService");
 // Import authentication logic (registration and login)
 const { register, login, changePassword, forgotPassword, resetPassword } = require("./controllers/authController");
 // Import middleware to protect private routes
-const { authenticateToken } = require("./middleware/authMiddleware");
+const { authenticateToken, requireAdmin } = require("./middleware/authMiddleware");
 // Import NFT-specific routes
 const nftRoutes = require("./routes/nftRoutes");
 // Import rate limiters
@@ -163,7 +163,7 @@ app.get("/api/auth/me", authenticateToken, async (req, res) => {
 // 3. User & Admin Helpers
 
 // Admin route to get all certificates issued in the system
-app.get("/api/certificates", authenticateToken, async (req, res) => {
+app.get("/api/certificates", authenticateToken, requireAdmin, async (req, res) => {
     try {
         // Fetch certificates with related student and nft data
         const { data, error } = await supabase
@@ -201,18 +201,18 @@ app.get("/api/certificates", authenticateToken, async (req, res) => {
 
 // Admin Analytics Route
 const { getAnalytics } = require('./controllers/analyticsController');
-app.get("/api/admin/analytics", authenticateToken, async (req, res) => {
+app.get("/api/admin/analytics", authenticateToken, requireAdmin, async (req, res) => {
     await getAnalytics(req, res);
 });
 
 // System Health Route
 const { getSystemHealth } = require('./controllers/healthController');
-app.get("/api/admin/health", authenticateToken, async (req, res) => {
+app.get("/api/admin/health", authenticateToken, requireAdmin, async (req, res) => {
     await getSystemHealth(req, res);
 });
 
 // Admin route to fetch all registered students (useful for dropdowns)
-app.get("/api/students", authenticateToken, async (req, res) => {
+app.get("/api/students", authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('students')
@@ -239,9 +239,9 @@ app.get("/api/students", authenticateToken, async (req, res) => {
 });
 
 // Helper function to fetch student by ID from database
-// Student Details Route
+// Student Details Route (Admin Only)
 const { getStudentDetails } = require('./controllers/studentController');
-app.get("/api/students/:id/details", authenticateToken, async (req, res) => {
+app.get("/api/students/:id/details", authenticateToken, requireAdmin, async (req, res) => {
     await getStudentDetails(req, res);
 });
 
