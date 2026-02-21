@@ -161,6 +161,22 @@ async function issueNFT(req, res) {
     }
 }
 
+/**
+ * Controller: getWalletInfo
+ * Fetches the admin's blockchain wallet balance and gas estimates 
+ * for UI warnings before minting operations.
+ */
+async function getWalletInfo(req, res) {
+    try {
+        const { getAdminWalletInfo } = require('../services/blockchainService');
+        const info = await getAdminWalletInfo();
+        res.status(200).json(info);
+    } catch (error) {
+        console.error("Wallet Info RPC Error:", error);
+        res.status(500).json({ error: "Failed to load wallet data from blockchain network" });
+    }
+}
+
 // Export function as a module
-module.exports = { issueNFT };
+module.exports = { issueNFT, getWalletInfo };
 

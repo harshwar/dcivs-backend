@@ -27,6 +27,8 @@ const { register, login, changePassword, forgotPassword, resetPassword } = requi
 const { authenticateToken, requireAdmin } = require("./middleware/authMiddleware");
 // Import NFT-specific routes
 const nftRoutes = require("./routes/nftRoutes");
+// Import AI-specific routes
+const aiRoutes = require("./routes/aiRoutes");
 // Import rate limiters
 const { authLimiter, apiLimiter, mintLimiter } = require("./middleware/rateLimiter");
 // Import error handlers
@@ -93,6 +95,9 @@ app.get('/api/csrf-token', getCsrfToken);
 
 // 1. NFT-related endpoints (Minting, Issuance)
 app.use("/api/nft", nftRoutes);
+
+// AI-related endpoints (Certificate auto-fill)
+app.use("/api/ai", aiRoutes);
 
 // 2. Verification endpoints (Public + Admin)
 const verificationRoutes = require("./routes/verificationRoutes");

@@ -133,9 +133,31 @@ router.get('/:tokenId', async (req, res) => {
         // Generate QR code
         const qrCode = await generateVerificationQR(tokenId);
 
+        // Fetch metadata from IPFS if tokenURI exists
+        let imageUrl = null;
+        if (verification.tokenURI) {
+            try {
+                const axios = require('axios');
+                
+                // tokenURI is usually ipfs://CID
+                const cid = verification.tokenURI.replace('ipfs://', '');
+                // Try fetching through local proxy to bypass CORS/connectivity issues
+                const proxyUrl = `http://localhost:3001/api/ipfs/${cid}`;
+                
+                const metaRes = await axios.get(proxyUrl, { timeout: 8000 });
+                if (metaRes.data && metaRes.data.image) {
+                    const imageCid = metaRes.data.image.replace('ipfs://', '');
+                    imageUrl = `/api/ipfs/${imageCid}`;
+                }
+            } catch (metaError) {
+                console.warn(`[Verification] Metadata fetch failed for ${verification.tokenURI}:`, metaError.message);
+            }
+        }
+
         res.json({
             ...verification,
             certificate: nftRecord?.certificate || null,
+            imageUrl: imageUrl,
             qrCode: qrCode,
             verifiedAt: new Date().toISOString()
         });

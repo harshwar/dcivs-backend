@@ -31,9 +31,14 @@ const ABI = [
     "event CertificateReinstated(uint256 indexed tokenId, address indexed reinstatedBy)"
 ];
 
-// Shared provider and contract instances
+// Shared provider and contract instances (Singleton Pattern to prevent Infura rate limits)
+let staticProvider = null;
+
 function getProvider() {
-    return new ethers.JsonRpcProvider(RPC_URL);
+    if (!staticProvider) {
+        staticProvider = new ethers.JsonRpcProvider(RPC_URL);
+    }
+    return staticProvider;
 }
 
 function getContract(withSigner = false) {
@@ -44,6 +49,13 @@ function getContract(withSigner = false) {
     }
     return new ethers.Contract(CONTRACT_ADDRESS, ABI, provider);
 }
+
+// In-memory cache for wallet info to prevent dashboard spams
+let walletCache = {
+    data: null,
+    timestamp: 0
+};
+const CACHE_DURATION = 30000; // 30 seconds
 
 /**
  * Mint a new NFT certificate
@@ -187,13 +199,64 @@ async function verifyCertificate(tokenId) {
     };
 }
 
+/**
+ * Get the administrator's wallet balance and estimated gas costs for one certificate
+ */
+async function getAdminWalletInfo() {
+    const now = Date.now();
+    
+    // Return cached data if valid
+    if (walletCache.data && (now - walletCache.timestamp < CACHE_DURATION)) {
+        console.log("[Blockchain Service] Returning cached wallet info...");
+        return walletCache.data;
+    }
+
+    try {
+        const provider = getProvider();
+        const signer = new ethers.Wallet(PRIVATE_KEY, provider);
+        
+        // Fetch Admin Balance
+        const balanceWei = await provider.getBalance(signer.address);
+        const balanceEth = ethers.formatEther(balanceWei);
+        
+        // Fetch Current Gas Price Estimate
+        const feeData = await provider.getFeeData();
+        const gasPrice = feeData.gasPrice || feeData.maxFeePerGas || 0n;
+        
+        // Estimate gas for a standard safeMint (typically ~150,000 to 250,000)
+        const estimatedGasLimit = 250000n; 
+        const estimatedCostWei = gasPrice * estimatedGasLimit;
+        const estimatedCostEth = ethers.formatEther(estimatedCostWei);
+
+        const result = {
+            address: signer.address,
+            balanceEth: parseFloat(balanceEth).toFixed(4),
+            estimatedCostEth: parseFloat(estimatedCostEth).toFixed(6)
+        };
+
+        // Update cache
+        walletCache = {
+            data: result,
+            timestamp: now
+        };
+
+        return result;
+    } catch (error) {
+        console.error("Wallet Info Error:", error);
+        // If we have stale cache, return it rather than failing completely during rate limits
+        if (walletCache.data) return walletCache.data;
+        throw new Error("Failed to fetch admin wallet info from blockchain");
+    }
+}
+
 module.exports = { 
     mintNFT, 
     revokeNFT, 
     reinstateNFT,
     isTokenRevoked, 
     getTokenInfo,
-    verifyCertificate
+    verifyCertificate,
+    getAdminWalletInfo
 };
 
 

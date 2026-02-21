@@ -214,16 +214,28 @@ async function getAssets(req, res) {
 
         if (error) throw error;
 
-        // Transform for frontend
-        const formatted = assets.map(a => ({
-            tokenId: a.token_id,
-            transactionHash: a.transaction_hash,
-            title: a.certificate?.title || 'Untitled Certificate',
-            description: a.certificate?.description,
-            imageUrl: null, 
-            ipfsCid: a.ipfs_cid,
-            issueDate: a.certificate?.issue_date,
-            department: a.certificate?.department
+        // Transform for frontend and check revocation on blockchain
+        const { isTokenRevoked } = require('../services/blockchainService');
+        
+        const formatted = await Promise.all(assets.map(async (a) => {
+            let isRevoked = false;
+            try {
+                isRevoked = await isTokenRevoked(a.token_id);
+            } catch (e) {
+                console.warn(`[GetAssets] Error checking revocation for token ${a.token_id}:`, e.message);
+            }
+
+            return {
+                tokenId: a.token_id,
+                transactionHash: a.transaction_hash,
+                title: a.certificate?.title || 'Untitled Certificate',
+                description: a.certificate?.description,
+                imageUrl: null, 
+                ipfsCid: a.ipfs_cid,
+                issueDate: a.certificate?.issue_date,
+                department: a.certificate?.department,
+                isRevoked: isRevoked
+            };
         }));
 
         res.json({ assets: formatted });
