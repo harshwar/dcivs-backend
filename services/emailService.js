@@ -312,10 +312,259 @@ async function sendPasswordResetEmail({ email, full_name, resetUrl }) {
     }
 }
 
+/**
+ * sendCertificateStatusEmail:
+ * Notifies a student when their certificate is revoked or reinstated.
+ */
+async function sendCertificateStatusEmail({ email, full_name, certificateTitle, status, tokenId }) {
+    try {
+        const isRevoked = status.toLowerCase() === 'revoked';
+        const statusColor = isRevoked ? '#ef4444' : '#10b981';
+        const statusLabel = isRevoked ? 'REVOKED' : 'REINSTATED';
+        const verifyUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/verify/${tokenId}`;
+
+        console.log(`📧 Resend Status Update | From: ${DEFAULT_FROM} | To: ${email.toLowerCase()} | Status: ${statusLabel}`);
+
+        const { data, error } = await resend.emails.send({
+            from: DEFAULT_FROM,
+            to: email.toLowerCase(),
+            subject: `${isRevoked ? '⚠️' : '✅'} Certificate Status Update: ${certificateTitle}`,
+            html: `
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
+        .container { max-width: 600px; margin: 20px auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; }
+        .header { text-align: center; padding-bottom: 20px; border-bottom: 2px solid #818cf8; }
+        .content { padding: 30px 0; }
+        .status-badge { display: inline-block; padding: 6px 12px; border-radius: 9999px; font-weight: bold; color: white; background-color: ${statusColor}; margin: 10px 0; }
+        .footer { text-align: center; color: #64748b; font-size: 12px; padding-top: 20px; border-top: 1px solid #e2e8f0; }
+        .button { display: inline-block; padding: 12px 24px; background-color: #4f46e5; color: white; text-decoration: none; border-radius: 8px; font-weight: bold; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1 style="color: #4f46e5;">Certificate Status Update</h1>
+        </div>
+        <div class="content">
+            <p>Hello <strong>${full_name}</strong>,</p>
+            <p>The status of your digital certificate has been updated by the institution:</p>
+            <div style="background-color: #f8fafc; padding: 20px; border-radius: 8px; border-left: 4px solid #4f46e5;">
+                <p style="margin: 0;"><strong>Certificate:</strong> ${certificateTitle}</p>
+                <p style="margin: 5px 0;"><strong>Token ID:</strong> #${tokenId}</p>
+                <p style="margin: 5px 0;"><strong>Status:</strong> <span class="status-badge">${statusLabel}</span></p>
+            </div>
+            ${isRevoked 
+                ? `<p style="color: #ef4444; margin-top: 20px;"><strong>Notice:</strong> This certificate is no longer considered valid and will show as "Revoked" on the public verification page.</p>`
+                : `<p style="color: #10b981; margin-top: 20px;"><strong>Good News:</strong> Your certificate has been reinstated and is now fully valid for public verification.</p>`
+            }
+            <div style="text-align: center;">
+                <a href="${verifyUrl}" class="button">View Certificate Status</a>
+            </div>
+            <p style="margin-top: 30px;">If you believe this is an error, please contact the administration office.</p>
+        </div>
+        <div class="footer">
+            <p>&copy; ${new Date().getFullYear()} University NFT Certificate System</p>
+        </div>
+    </div>
+</body>
+</html>
+            `
+        });
+
+        if (error) throw error;
+        return { success: true, data };
+    } catch (error) {
+        console.error('Certificate status email error:', error);
+        return { success: false, error: error.message };
+    }
+}
+
+/**
+ * sendSecurityAlertEmail:
+ * Notifies a user of critical security changes like password or 2FA updates.
+ */
+async function sendSecurityAlertEmail({ email, full_name, action, details }) {
+    try {
+        console.log(`📧 Resend Security Alert | From: ${DEFAULT_FROM} | To: ${email.toLowerCase()} | Action: ${action}`);
+
+        const { data, error } = await resend.emails.send({
+            from: DEFAULT_FROM,
+            to: email.toLowerCase(),
+            subject: `🔒 Security Alert: Account ${action}`,
+            html: `
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
+        .container { max-width: 600px; margin: 20px auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; }
+        .alert-header { background-color: #fef2f2; border: 1px solid #fee2e2; padding: 15px; border-radius: 8px; color: #991b1b; text-align: center; }
+        .content { padding: 30px 0; }
+        .footer { text-align: center; color: #64748b; font-size: 12px; padding-top: 20px; border-top: 1px solid #e2e8f0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="alert-header">
+            <h2 style="margin: 0;">Security Notification</h2>
+        </div>
+        <div class="content">
+            <p>Hello <strong>${full_name}</strong>,</p>
+            <p>This is an automated alert to inform you that a critical change was made to your account:</p>
+            <div style="background-color: #f8fafc; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0;">
+                <p style="margin: 0;"><strong>Action:</strong> ${action}</p>
+                <p style="margin: 5px 0;"><strong>Details:</strong> ${details}</p>
+                <p style="margin: 5px 0;"><strong>Time:</strong> ${new Date().toLocaleString()}</p>
+            </div>
+            <p style="margin-top: 20px; padding: 15px; background-color: #fffbeb; border: 1px solid #fef3c7; border-radius: 8px; color: #92400e;">
+                <strong>Was this you?</strong> If you performed this action, you can safely ignore this email. If not, please <strong>change your password immediately</strong> and contact support.
+            </p>
+        </div>
+        <div class="footer">
+            <p>&copy; ${new Date().getFullYear()} University NFT Certificate System</p>
+        </div>
+    </div>
+</body>
+</html>
+            `
+        });
+
+        if (error) throw error;
+        return { success: true, data };
+    } catch (error) {
+        console.error('Security alert email error:', error);
+        return { success: false, error: error.message };
+    }
+}
+
+/**
+ * sendVerificationEmail:
+ * Sends a link to the student to verify their email address.
+ */
+async function sendVerificationEmail({ email, full_name, token }) {
+    try {
+        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+        const verifyUrl = `${frontendUrl}/verify-email?token=${token}`;
+
+        console.log(`📧 Resend Verification | From: ${DEFAULT_FROM} | To: ${email.toLowerCase()}`);
+
+        const { data, error } = await resend.emails.send({
+            from: DEFAULT_FROM,
+            to: email.toLowerCase(),
+            subject: '✉️ Verify Your Email - University NFT System',
+            html: `
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
+        .container { max-width: 600px; margin: 20px auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; }
+        .header { text-align: center; padding-bottom: 20px; border-bottom: 2px solid #818cf8; }
+        .content { padding: 30px 0; }
+        .footer { text-align: center; color: #64748b; font-size: 12px; padding-top: 20px; border-top: 1px solid #e2e8f0; }
+        .button { display: inline-block; padding: 12px 24px; background-color: #4f46e5; color: white !important; text-decoration: none; border-radius: 8px; font-weight: bold; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1 style="color: #4f46e5;">Email Verification</h1>
+        </div>
+        <div class="content">
+            <p>Hello <strong>${full_name}</strong>,</p>
+            <p>Thank you for registering with the University NFT Certificate System! To complete your registration and protect your identity, please verify your email address by clicking the button below:</p>
+            <div style="text-align: center;">
+                <a href="${verifyUrl}" class="button">Verify Email Address</a>
+            </div>
+            <p style="margin-top: 30px;">This link will expire in 24 hours. After verifying, your account will be reviewed by the administration for final activation.</p>
+            <p>If you did not register for this account, please ignore this email.</p>
+        </div>
+        <div class="footer">
+            <p>&copy; ${new Date().getFullYear()} University NFT Certificate System</p>
+        </div>
+    </div>
+</body>
+</html>
+            `
+        });
+
+        if (error) throw error;
+        return { success: true, data };
+    } catch (error) {
+        console.error('Verification email error:', error);
+        return { success: false, error: error.message };
+    }
+}
+
+/**
+ * sendAccountActivatedEmail:
+ * Sent after an admin approves a student.
+ */
+async function sendAccountActivatedEmail({ email, full_name }) {
+    try {
+        const loginUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/login`;
+
+        console.log(`📧 Resend Activation | From: ${DEFAULT_FROM} | To: ${email.toLowerCase()}`);
+
+        const { data, error } = await resend.emails.send({
+            from: DEFAULT_FROM,
+            to: email.toLowerCase(),
+            subject: '🎉 Account Activated - University NFT System',
+            html: `
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
+        .container { max-width: 600px; margin: 20px auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; }
+        .header { text-align: center; padding-bottom: 20px; border-bottom: 2px solid #818cf8; }
+        .content { padding: 30px 0; }
+        .footer { text-align: center; color: #64748b; font-size: 12px; padding-top: 20px; border-top: 1px solid #e2e8f0; }
+        .button { display: inline-block; padding: 12px 24px; background-color: #10b981; color: white !important; text-decoration: none; border-radius: 8px; font-weight: bold; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1 style="color: #10b981;">Account Activated!</h1>
+        </div>
+        <div class="content">
+            <p>Hello <strong>${full_name}</strong>,</p>
+            <p>Great news! Your account has been reviewed and successfully approved by the administration.</p>
+            <p>Your <strong>Blockchain Wallet</strong> has been created, and you can now log in to view your certificates, set up your wallet PIN, and register your passkeys for maximum security.</p>
+            <div style="text-align: center;">
+                <a href="${loginUrl}" class="button">Log In Now</a>
+            </div>
+            <p style="margin-top: 30px;">Welcome to the future of digital credentials!</p>
+        </div>
+        <div class="footer">
+            <p>&copy; ${new Date().getFullYear()} University NFT Certificate System</p>
+        </div>
+    </div>
+</body>
+</html>
+            `
+        });
+
+        if (error) throw error;
+        return { success: true, data };
+    } catch (error) {
+        console.error('Account activation email error:', error);
+        return { success: false, error: error.message };
+    }
+}
+
 module.exports = {
     sendWelcomeEmail,
     sendCertificateIssuedEmail,
     sendPasswordResetEmail,
+    sendCertificateStatusEmail,
+    sendSecurityAlertEmail,
+    sendVerificationEmail,
+    sendAccountActivatedEmail,
     sendTestEmail,
     verifyEmailConfig
 };

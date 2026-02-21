@@ -2,9 +2,29 @@ const express = require('express');
 const router = express.Router();
 const supabase = require('../db');
 const { authenticateToken, requireAdmin } = require('../middleware/authMiddleware');
+const { 
+    getPendingStudents, 
+    approveStudent, 
+    rejectStudent 
+} = require('../controllers/adminController');
 
-// Middleware to ensure user is an admin
-// (requireAdmin removed - now imported from shared middleware)
+/**
+ * GET /api/admin/pending-students
+ * Fetch students waiting for identity approval
+ */
+router.get('/pending-students', authenticateToken, requireAdmin, getPendingStudents);
+
+/**
+ * POST /api/admin/approve-student/:id
+ * Admin manual identity lock-in
+ */
+router.post('/approve-student/:id', authenticateToken, requireAdmin, approveStudent);
+
+/**
+ * POST /api/admin/reject-student/:id
+ * Admin registration rejection
+ */
+router.post('/reject-student/:id', authenticateToken, requireAdmin, rejectStudent);
 
 /**
  * GET /api/admin/logs

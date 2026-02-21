@@ -7,6 +7,7 @@ const router = express.Router();
 const { verifyCertificate, getTokenInfo, revokeNFT, reinstateNFT } = require('../services/blockchainService');
 const { generateVerificationQR } = require('../services/qrService');
 const { authenticateToken } = require('../middleware/authMiddleware');
+const { sendCertificateStatusEmail } = require('../services/emailService');
 const supabase = require('../db');
 
 // ==========================================
@@ -50,6 +51,37 @@ router.post('/revoke/:tokenId', authenticateToken, async (req, res) => {
             created_at: new Date().toISOString()
         }]);
 
+        // --- Send Notification Email ---
+        try {
+            const { data: nftRecord } = await supabase
+                .from('nfts')
+                .select(`
+                    *,
+                    certificate:certificates (
+                        title,
+                        student:students (
+                            full_name,
+                            email
+                        )
+                    )
+                `)
+                .eq('token_id', parseInt(tokenId))
+                .single();
+
+            if (nftRecord?.certificate?.student) {
+                const student = nftRecord.certificate.student;
+                await sendCertificateStatusEmail({
+                    email: student.email,
+                    full_name: student.full_name,
+                    certificateTitle: nftRecord.certificate.title,
+                    status: 'Revoked',
+                    tokenId
+                });
+            }
+        } catch (emailErr) {
+            console.warn('[Revocation Alert] Failed to send email:', emailErr.message);
+        }
+
         res.json({
             message: 'Certificate revoked successfully',
             ...result
@@ -81,6 +113,37 @@ router.post('/reinstate/:tokenId', authenticateToken, async (req, res) => {
             details: { tokenId, reinstatedBy: req.user?.email || 'admin' },
             created_at: new Date().toISOString()
         }]);
+
+        // --- Send Notification Email ---
+        try {
+            const { data: nftRecord } = await supabase
+                .from('nfts')
+                .select(`
+                    *,
+                    certificate:certificates (
+                        title,
+                        student:students (
+                            full_name,
+                            email
+                        )
+                    )
+                `)
+                .eq('token_id', parseInt(tokenId))
+                .single();
+
+            if (nftRecord?.certificate?.student) {
+                const student = nftRecord.certificate.student;
+                await sendCertificateStatusEmail({
+                    email: student.email,
+                    full_name: student.full_name,
+                    certificateTitle: nftRecord.certificate.title,
+                    status: 'Reinstated',
+                    tokenId
+                });
+            }
+        } catch (emailErr) {
+            console.warn('[Reinstatement Alert] Failed to send email:', emailErr.message);
+        }
 
         res.json({
             message: 'Certificate reinstated successfully',

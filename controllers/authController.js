@@ -7,7 +7,13 @@ const supabase = require('../db');
 // Wallet utility for creating wallets during registration
 const { createEncryptedWallet } = require('../services/walletService');
 // Email service for notifications
-const { sendWelcomeEmail, sendPasswordResetEmail } = require('../services/emailService');
+const { 
+  sendWelcomeEmail, 
+  sendPasswordResetEmail, 
+  sendSecurityAlertEmail,
+  sendVerificationEmail 
+} = require('../services/emailService');
+const crypto = require('crypto');
 
 // Secret key for JWT signing (loaded from environment)
 const JWT_SECRET = process.env.JWT_SECRET || 'change_this_secret';
@@ -24,7 +30,7 @@ function signToken(payload) {
 
 /**
  * POST /api/auth/register
- * Handles student registration, wallet creation, and initial login.
+ * Handles student registration with email verification and delayed wallet creation.
  */
 async function register(req, res) {
   try {
@@ -45,6 +51,17 @@ async function register(req, res) {
       });
     }
 
+    // --- DATA NORMALIZATION ---
+    const normalizedID = student_id_number.trim().toUpperCase().replace(/\s+/g, '');
+    const normalizedCourse = course_name.trim().toUpperCase();
+
+    // --- FORMAT VALIDATION ---
+    // Format: [Year][FY/SY/TY][Dept][RollNo] e.g. 25TYBSCIT006
+    const idRegex = /^\d{2}(FY|SY|TY)[A-Z]+\d{3}$/;
+    if (!idRegex.test(normalizedID)) {
+      return res.status(400).json({ error: 'Invalid Student ID format. Expected: 25TYBSCIT001' });
+    }
+
     // Check if a user with this email already exists (case-insensitive)
     const { data: existing, error: existError } = await supabase
         .from('students')
@@ -52,84 +69,138 @@ async function register(req, res) {
         .ilike('email', email.trim())
         .maybeSingle();
     
-    // .single() returns error if 0 rows (PGRST116), so we check if data exists
     if (existing) {
       return res.status(409).json({ error: 'Email already registered.' });
     }
 
-    // Generate a new custodial wallet for the student immediately upon registration
-    const { address, encryptedJson } = await createEncryptedWallet(password);
+    // Check if roll number is already taken
+    const { data: existingRoll } = await supabase
+        .from('students')
+        .select('id')
+        .eq('student_id_number', normalizedID)
+        .maybeSingle();
+
+    if (existingRoll) {
+      return res.status(409).json({ error: 'Student ID/Roll Number already registered.' });
+    }
 
     // Hash the password before storing it
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // --- SEQUENTIAL WRITE (Mimicking Transaction) ---
-    // 1. Insert Student
-    const { data: newUser, error: studentError } = await supabase
+    // Generate Verification Token
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+
+    // Insert Student (Delayed Wallet Creation & PENDING status)
+    const { data: user, error: studentError } = await supabase
         .from('students')
         .insert([{
-            email, 
+            email: email.trim(), 
             password: hashedPassword, 
-            full_name, 
-            student_id_number, 
-            course_name, 
+            full_name: full_name.trim(), 
+            student_id_number: normalizedID, 
+            course_name: normalizedCourse, 
             year, 
-            ethereum_address: address
+            status: 'PENDING_EMAIL',
+            is_verified: false,
+            verification_token: verificationToken
         }])
         .select()
         .single();
 
     if (studentError) {
-        throw new Error(`Student Insert Failed: ${studentError.message}`);
+        throw new Error(`Student Registration Failed: ${studentError.message}`);
     }
 
-    const user = newUser;
-
-    // 2. Insert Wallet
-    const { error: walletError } = await supabase
-        .from('wallets')
-        .insert([{
-            user_id: user.id,
-            public_address: address,
-            encrypted_json: encryptedJson
-        }]);
-
-    if (walletError) {
-        // Rollback attempt: Delete user if wallet creation fails
-        await supabase.from('students').delete().eq('id', user.id);
-        throw new Error(`Wallet Insert Failed: ${walletError.message}`);
+    // --- SEND VERIFICATION EMAIL ---
+    try {
+      await sendVerificationEmail({
+        email: user.email,
+        full_name: user.full_name,
+        token: verificationToken
+      });
+    } catch (emailErr) {
+      console.error('Failed to send verification email:', emailErr);
     }
-
-    // Automatically log the user in by generating a JWT token after registration
-    const token = signToken({ id: user.id, email: user.email });
 
     // Log Activity
     const { logActivity } = require('../services/activityLogger');
     logActivity({
         userId: user.id,
-        action: 'REGISTER_STUDENT',
-        details: `Registered ${user.email}`,
+        action: 'REGISTER_STUDENT_PENDING',
+        details: `Registered ${user.email} (Pending Email Verification)`,
         req
     });
 
-    // Send welcome email (non-blocking - don't wait for it)
-    sendWelcomeEmail({ email: user.email, full_name: user.full_name })
-      .then(result => {
-        if (!result.success) console.warn('Welcome email failed:', result.error);
-      });
-
     res.status(201).json({
-      message: 'Registered successfully.',
-      token,
+      message: 'Registration successful! Please check your email to verify your account.',
       user: {
-        ...user,
-        wallet_pin_set: false,
-        has_passkeys: false // New users definitely don't have passkeys yet
+        email: user.email,
+        full_name: user.full_name,
+        status: user.status
       },
     });
   } catch (error) {
     console.error('Register error:', error);
     res.status(500).json({ error: error.message || 'Registration failed.' });
+  }
+}
+
+/**
+ * GET /api/auth/verify-email?token=xyz
+ * Validates the email verification token and moves student to PENDING_APPROVAL.
+ */
+async function verifyEmail(req, res) {
+  try {
+    const { token } = req.query;
+
+    if (!token) {
+      return res.status(400).json({ error: 'Verification token is required.' });
+    }
+
+    // Find student with this token
+    const { data: user, error } = await supabase
+      .from('students')
+      .select('id, email, full_name, status')
+      .eq('verification_token', token)
+      .maybeSingle();
+
+    if (error || !user) {
+      return res.status(400).json({ error: 'Invalid or expired verification link.' });
+    }
+
+    if (user.status !== 'PENDING_EMAIL') {
+      return res.status(400).json({ error: 'Email is already verified or account is in a different state.' });
+    }
+
+    // Update status to PENDING_APPROVAL
+    const { error: updateError } = await supabase
+      .from('students')
+      .update({
+        status: 'PENDING_APPROVAL',
+        is_verified: true,
+        verification_token: null // Token used
+      })
+      .eq('id', user.id);
+
+    if (updateError) throw updateError;
+
+    // Log activity
+    const { logActivity } = require('../services/activityLogger');
+    logActivity({
+      userId: user.id,
+      action: 'EMAIL_VERIFIED',
+      details: 'Student verified their email address',
+      req
+    });
+
+    res.json({ 
+      message: 'Email verified successfully! Your account is now pending administrator approval.',
+      nextStep: 'APPROVAL'
+    });
+
+  } catch (error) {
+    console.error('Email verification error:', error);
+    res.status(500).json({ error: 'Failed to verify email.' });
   }
 }
 
@@ -235,7 +306,7 @@ async function login(req, res) {
 
     const { data: user, error } = await supabase
         .from('students')
-        .select('id, email, full_name, password, totp_enabled, wallet_pin_set')
+        .select('id, email, full_name, password, totp_enabled, wallet_pin_set, status')
         .ilike('email', email.trim())
         .maybeSingle();
 
@@ -273,6 +344,31 @@ async function login(req, res) {
 
     // Successful password — reset lockout counter
     resetAttempts(email);
+
+    // --- STATUS CHECK ---
+    if (user.status === 'PENDING_EMAIL') {
+      return res.status(403).json({ 
+        error: 'Email not verified.', 
+        code: 'PENDING_EMAIL',
+        message: 'Please check your email and click the verification link to proceed.' 
+      });
+    }
+
+    if (user.status === 'PENDING_APPROVAL') {
+      return res.status(403).json({ 
+        error: 'Account pending approval.', 
+        code: 'PENDING_APPROVAL',
+        message: 'Your registration is being reviewed by the administration. You will receive an email once activated.' 
+      });
+    }
+
+    if (user.status === 'REJECTED') {
+      return res.status(403).json({ 
+        error: 'Account rejected.', 
+        code: 'REJECTED',
+        message: 'Your registration application was declined by the administration.' 
+      });
+    }
 
     // --- 2FA CHECK ---
     if (user.totp_enabled) {
@@ -403,6 +499,21 @@ async function changePassword(req, res) {
         req
     });
 
+    // --- Send Security Alert ---
+    try {
+        const email = table === 'admins' ? user.email : user.email; // both tables have email
+        const full_name = table === 'admins' ? user.username : user.full_name;
+        
+        await sendSecurityAlertEmail({
+            email,
+            full_name: full_name || 'User',
+            action: 'Password Changed',
+            details: 'Your account password was successfully updated while you were logged in.'
+        });
+    } catch (emailErr) {
+        console.warn('[Security Alert] Failed to send email:', emailErr.message);
+    }
+
     res.json({ message: "Password changed successfully." });
 
   } catch (error) {
@@ -414,8 +525,6 @@ async function changePassword(req, res) {
 // ──────────────────────────────────────────────────────────
 // Forgot Password / Password Reset (Token-based)
 // ──────────────────────────────────────────────────────────
-
-const crypto = require('crypto');
 
 // In-memory token store: Map<token, { email, expiresAt }>
 const resetTokens = new Map();
@@ -468,6 +577,7 @@ async function forgotPassword(req, res) {
     resetTokens.set(token, {
       email: user.email,
       userId: user.id,
+      full_name: user.full_name,
       expiresAt: Date.now() + RESET_TOKEN_EXPIRY_MS
     });
 
@@ -567,6 +677,21 @@ async function resetPassword(req, res) {
       resetAttempts(tokenData.email);
     } catch (e) { /* non-critical */ }
 
+    // --- Send Security Alert ---
+    try {
+      // We need the user's name for a nice email. We can get it from tokenData if we store it there, 
+      // but if not, we can just use "User" or fetch it.
+      // Let's assume full_name might not be in tokenData yet (I'll check forgotPassword)
+      await sendSecurityAlertEmail({
+        email: tokenData.email,
+        full_name: tokenData.full_name || 'User',
+        action: 'Password Reset',
+        details: 'Your password was reset using a recovery link sent to your email.'
+      });
+    } catch (emailErr) {
+      console.warn('[Security Alert] Failed to send email:', emailErr.message);
+    }
+
     res.json({ message: 'Password has been reset successfully. You can now log in.' });
 
   } catch (error) {
@@ -578,6 +703,7 @@ async function resetPassword(req, res) {
 // Export the controller methods for use in routing
 module.exports = {
   register,
+  verifyEmail,
   login,
   changePassword,
   forgotPassword,

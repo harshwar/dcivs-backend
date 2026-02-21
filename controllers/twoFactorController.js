@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const supabase = require('../db');
+const { sendSecurityAlertEmail } = require('../services/emailService');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'change_this_secret';
 
@@ -110,16 +111,17 @@ async function verifySetup2FA(req, res) {
       })
       .eq('id', userId);
 
-    // Log activity
+    // --- Send Security Alert ---
     try {
-      const { logActivity } = require('../services/activityLogger');
-      logActivity({
-        userId,
-        action: 'ENABLE_2FA',
-        details: 'Two-factor authentication enabled',
-        req
+      await sendSecurityAlertEmail({
+        email: user.email,
+        full_name: user.full_name || 'User',
+        action: 'Two-Factor Authentication Enabled',
+        details: 'TOTP-based 2FA has been successfully configured for your account.'
       });
-    } catch (e) { /* non-critical */ }
+    } catch (emailErr) {
+      console.warn('[Security Alert] Failed to send email:', emailErr.message);
+    }
 
     res.json({
       message: '2FA has been enabled successfully.',
@@ -279,16 +281,17 @@ async function disable2FA(req, res) {
       })
       .eq('id', userId);
 
-    // Log activity
+    // --- Send Security Alert ---
     try {
-      const { logActivity } = require('../services/activityLogger');
-      logActivity({
-        userId,
-        action: 'DISABLE_2FA',
-        details: 'Two-factor authentication disabled',
-        req
+      await sendSecurityAlertEmail({
+        email: user.email,
+        full_name: user.full_name || 'User',
+        action: 'Two-Factor Authentication Disabled',
+        details: 'Two-factor authentication has been deactivated for your account.'
       });
-    } catch (e) { /* non-critical */ }
+    } catch (emailErr) {
+      console.warn('[Security Alert] Failed to send email:', emailErr.message);
+    }
 
     res.json({ message: '2FA has been disabled.' });
 

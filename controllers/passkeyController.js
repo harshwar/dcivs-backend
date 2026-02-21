@@ -5,6 +5,7 @@
 const supabase = require('../db');
 const jwt = require('jsonwebtoken');
 const passkeyService = require('../services/passkeyService');
+const { sendSecurityAlertEmail } = require('../services/emailService');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'change_this_secret';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
@@ -111,16 +112,25 @@ async function registerVerify(req, res) {
       throw new Error('Failed to store passkey.');
     }
 
-    // Log activity
+    // --- Send Security Alert ---
     try {
-      const { logActivity } = require('../services/activityLogger');
-      logActivity({
-        userId,
-        action: 'REGISTER_PASSKEY',
-        details: `Registered passkey "${friendlyName || 'My Passkey'}"`,
-        req,
-      });
-    } catch (e) { /* non-critical */ }
+      const { data: user } = await supabase
+        .from('students')
+        .select('email, full_name')
+        .eq('id', userId)
+        .single();
+      
+      if (user) {
+        await sendSecurityAlertEmail({
+          email: user.email,
+          full_name: user.full_name || 'User',
+          action: 'New Passkey Added',
+          details: `A new WebAuthn passkey ("${friendlyName || 'My Passkey'}") was successfully registered for your account.`
+        });
+      }
+    } catch (emailErr) {
+      console.warn('[Security Alert] Failed to send email:', emailErr.message);
+    }
 
     res.status(201).json({
       message: 'Passkey registered successfully.',

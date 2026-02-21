@@ -22,7 +22,7 @@ const supabase = require("./db");
 // Import wallet creation utility
 const { createEncryptedWallet } = require("./services/walletService");
 // Import authentication logic (registration and login)
-const { register, login, changePassword, forgotPassword, resetPassword } = require("./controllers/authController");
+const { register, verifyEmail, login, changePassword, forgotPassword, resetPassword } = require("./controllers/authController");
 // Import middleware to protect private routes
 const { authenticateToken, requireAdmin } = require("./middleware/authMiddleware");
 // Import NFT-specific routes
@@ -115,6 +115,8 @@ app.use("/api/auth/passkey", passkeyRoutes);
 // 2. Authentication endpoints (with stricter rate limit)
 // Public registration route
 app.post("/api/auth/register", authLimiter, register);
+// Email verification route
+app.get("/api/auth/verify-email", authLimiter, verifyEmail);
 // Public login route
 // Public login route
 app.post("/api/auth/login", authLimiter, login);
