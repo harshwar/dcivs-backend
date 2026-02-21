@@ -1,22 +1,14 @@
 /**
- * Email Service using Gmail SMTP (Nodemailer)
+ * Email Service using Resend SDK
  * Handles all email notifications for the University NFT System
  */
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 
-// Create reusable transporter using generic SMTP or Gmail
-const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: parseInt(process.env.SMTP_PORT) || 587,
-    secure: process.env.SMTP_SECURE === 'true', // true for 465, false for 587
-    auth: {
-        user: process.env.SMTP_USER || process.env.GMAIL_USER,
-        pass: process.env.SMTP_PASS || process.env.GMAIL_APP_PASSWORD
-    }
-});
+// Initialize Resend with API Key
+const resend = new Resend(process.env.RESEND_API_KEY);
 
-// Default sender
-const DEFAULT_FROM = process.env.EMAIL_FROM || 'University NFT System <digitaldcivs@gmail.com>';
+// Default sender - must be from the verified domain
+const DEFAULT_FROM = process.env.EMAIL_FROM || 'University NFT System <noreply@dcivs.online>';
 
 /**
  * Send welcome email after student registration
@@ -25,7 +17,7 @@ const DEFAULT_FROM = process.env.EMAIL_FROM || 'University NFT System <digitaldc
  */
 async function sendWelcomeEmail(student) {
     try {
-        const mailOptions = {
+        const { data, error } = await resend.emails.send({
             from: DEFAULT_FROM,
             to: student.email,
             subject: 'Welcome to University NFT Certificate System',
@@ -96,11 +88,12 @@ async function sendWelcomeEmail(student) {
 </body>
 </html>
             `
-        };
+        });
 
-        const info = await transporter.sendMail(mailOptions);
-        console.log(`✉️  Welcome email sent to ${student.email} (ID: ${info.messageId})`);
-        return { success: true, messageId: info.messageId };
+        if (error) throw error;
+
+        console.log(`✉️  Welcome email sent to ${student.email} (ID: ${data.id})`);
+        return { success: true, messageId: data.id };
 
     } catch (error) {
         console.error('Welcome email error:', error);
@@ -117,7 +110,7 @@ async function sendCertificateIssuedEmail({ email, studentName, certificateTitle
     try {
         const verifyUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/verify/${tokenId}`;
         
-        const mailOptions = {
+        const { data, error } = await resend.emails.send({
             from: DEFAULT_FROM,
             to: email,
             subject: `🎉 New Certificate Issued: ${certificateTitle}`,
@@ -192,11 +185,12 @@ async function sendCertificateIssuedEmail({ email, studentName, certificateTitle
 </body>
 </html>
             `
-        };
+        });
 
-        const info = await transporter.sendMail(mailOptions);
-        console.log(`✉️  Certificate email sent to ${email} for Token #${tokenId}`);
-        return { success: true, messageId: info.messageId };
+        if (error) throw error;
+
+        console.log(`✉️  Certificate email sent to ${email} for Token #${tokenId} (ID: ${data.id})`);
+        return { success: true, messageId: data.id };
 
     } catch (error) {
         console.error('Certificate email error:', error);
@@ -210,16 +204,17 @@ async function sendCertificateIssuedEmail({ email, studentName, certificateTitle
  */
 async function sendTestEmail(toEmail) {
     try {
-        const mailOptions = {
+        const { data, error } = await resend.emails.send({
             from: DEFAULT_FROM,
             to: toEmail,
             subject: 'Test Email - University NFT System',
             html: '<h1>Test Email</h1><p>If you received this, the email service is working correctly! 🎉</p>'
-        };
+        });
 
-        const info = await transporter.sendMail(mailOptions);
-        console.log('Test email sent:', info.messageId);
-        return { success: true, messageId: info.messageId };
+        if (error) throw error;
+
+        console.log('Test email sent (ID):', data.id);
+        return { success: true, messageId: data.id };
     } catch (error) {
         console.error('Test email failed:', error);
         return { success: false, error: error.message };
@@ -231,11 +226,15 @@ async function sendTestEmail(toEmail) {
  */
 async function verifyEmailConfig() {
     try {
-        await transporter.verify();
-        console.log('✅ Email configuration verified - SMTP connection successful');
+        if (!process.env.RESEND_API_KEY) throw new Error('RESEND_API_KEY is missing');
+        // We can check if we can list domains as a heartbeat
+        const { data, error } = await resend.domains.list();
+        if (error) throw error;
+        
+        console.log('✅ Resend configuration verified - API key is active');
         return { success: true };
     } catch (error) {
-        console.error('❌ Email configuration failed:', error.message);
+        console.error('❌ Resend configuration failed:', error.message);
         return { success: false, error: error.message };
     }
 }
@@ -246,7 +245,7 @@ async function verifyEmailConfig() {
  */
 async function sendPasswordResetEmail({ email, full_name, resetUrl }) {
     try {
-        const mailOptions = {
+        const { data, error } = await resend.emails.send({
             from: DEFAULT_FROM,
             to: email,
             subject: '🔑 Reset Your Password - University NFT System',
@@ -297,11 +296,12 @@ async function sendPasswordResetEmail({ email, full_name, resetUrl }) {
 </body>
 </html>
             `
-        };
+        });
 
-        const info = await transporter.sendMail(mailOptions);
-        console.log(`✉️  Password reset email sent to ${email} (ID: ${info.messageId})`);
-        return { success: true, messageId: info.messageId };
+        if (error) throw error;
+
+        console.log(`✉️  Password reset email sent to ${email} (ID: ${data.id})`);
+        return { success: true, messageId: data.id };
 
     } catch (error) {
         console.error('Password reset email error:', error);
