@@ -215,23 +215,43 @@ async function getAdminWalletInfo() {
         const provider = getProvider();
         const signer = new ethers.Wallet(PRIVATE_KEY, provider);
         
-        // Fetch Admin Balance
+        // --- 1. Fetch Admin ETH Balance ---
         const balanceWei = await provider.getBalance(signer.address);
         const balanceEth = ethers.formatEther(balanceWei);
         
-        // Fetch Current Gas Price Estimate
+        // --- 2. Fetch ETH Price in INR (CoinGecko) ---
+        let ethPriceInr = 250000; // Realistic fallback: Oct 2023 avg
+        try {
+            const priceRes = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=inr');
+            if (priceRes.ok) {
+                const priceData = await priceRes.json();
+                ethPriceInr = priceData.ethereum.inr;
+            }
+        } catch (e) {
+            console.warn("[Blockchain Service] Price fetch failed, using fallback:", e.message);
+        }
+
+        // --- 3. Fetch Gas Estimates ---
         const feeData = await provider.getFeeData();
-        const gasPrice = feeData.gasPrice || feeData.maxFeePerGas || 0n;
         
-        // Estimate gas for a standard safeMint (typically ~150,000 to 250,000)
-        const estimatedGasLimit = 250000n; 
+        // EIP-1559 fallback: use maxFeePerGas if gasPrice is null, or fallback to a floor of 1 Gwei
+        let gasPrice = feeData.gasPrice || feeData.maxFeePerGas || 0n;
+        
+        // If gasPrice is 0 (testnet idle), fallback to 1 Gwei floor
+        if (gasPrice === 0n) {
+            gasPrice = ethers.parseUnits('1', 'gwei');
+        }
+        
+        // Estimate gas for a standard safeMint (~280,000 as safe upper bound)
+        const estimatedGasLimit = 280000n; 
         const estimatedCostWei = gasPrice * estimatedGasLimit;
         const estimatedCostEth = ethers.formatEther(estimatedCostWei);
 
         const result = {
             address: signer.address,
             balanceEth: parseFloat(balanceEth).toFixed(4),
-            estimatedCostEth: parseFloat(estimatedCostEth).toFixed(6)
+            estimatedCostEth: parseFloat(estimatedCostEth).toFixed(8),
+            ethPriceInr: ethPriceInr
         };
 
         // Update cache
@@ -243,7 +263,6 @@ async function getAdminWalletInfo() {
         return result;
     } catch (error) {
         console.error("Wallet Info Error:", error);
-        // If we have stale cache, return it rather than failing completely during rate limits
         if (walletCache.data) return walletCache.data;
         throw new Error("Failed to fetch admin wallet info from blockchain");
     }
