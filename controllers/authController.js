@@ -7,7 +7,7 @@ const supabase = require('../db');
 // Wallet utility for creating wallets during registration
 const { createEncryptedWallet } = require('../services/walletService');
 // Email service for notifications
-const { sendWelcomeEmail } = require('../services/emailService');
+const { sendWelcomeEmail, sendPasswordResetEmail } = require('../services/emailService');
 
 // Secret key for JWT signing (loaded from environment)
 const JWT_SECRET = process.env.JWT_SECRET || 'change_this_secret';
@@ -45,12 +45,12 @@ async function register(req, res) {
       });
     }
 
-    // Check if a user with this email already exists
+    // Check if a user with this email already exists (case-insensitive)
     const { data: existing, error: existError } = await supabase
         .from('students')
         .select('id')
-        .eq('email', email)
-        .single();
+        .ilike('email', email.trim())
+        .maybeSingle();
     
     // .single() returns error if 0 rows (PGRST116), so we check if data exists
     if (existing) {
@@ -183,8 +183,8 @@ async function login(req, res) {
     const { data: adminUser, error: adminError } = await supabase
         .from('admins')
         .select('id, email, password_hash, username, role')
-        .eq('email', email)
-        .single();
+        .ilike('email', email.trim())
+        .maybeSingle();
     
     if (adminUser) {
         const isAdminMatch = await bcrypt.compare(password, adminUser.password_hash);
@@ -236,8 +236,8 @@ async function login(req, res) {
     const { data: user, error } = await supabase
         .from('students')
         .select('id, email, full_name, password, totp_enabled, wallet_pin_set')
-        .eq('email', email)
-        .single();
+        .ilike('email', email.trim())
+        .maybeSingle();
 
     // Check if user was found
     if (error || !user) {
@@ -443,17 +443,25 @@ async function forgotPassword(req, res) {
     // Always return success to prevent email enumeration
     const successResponse = { message: 'If an account with that email exists, a reset link has been sent.' };
 
-    // Check if student exists
-    const { data: user } = await supabase
+    console.log(`🔍 Forgot Password Request for: ${email}`);
+    // Check if student exists (Case-Insensitive match via .ilike)
+    const { data: user, error: userError } = await supabase
       .from('students')
       .select('id, email, full_name')
-      .eq('email', email.toLowerCase().trim())
-      .single();
+      .ilike('email', email.trim())
+      .maybeSingle();
+
+    if (userError) {
+      console.log(`❌ Supabase lookup error for ${email}:`, userError.message);
+    }
 
     if (!user) {
+      console.log(`⚠️ User not found in 'students' table: ${email}`);
       // Still return success (don't reveal if email exists)
       return res.json(successResponse);
     }
+
+    console.log(`✅ User found: ${user.full_name} (${user.id})`);
 
     // Generate secure reset token
     const token = crypto.randomBytes(32).toString('hex');
@@ -467,8 +475,7 @@ async function forgotPassword(req, res) {
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
     const resetUrl = `${frontendUrl}/reset-password/${token}`;
 
-    // Send email
-    const { sendPasswordResetEmail } = require('../services/emailService');
+    console.log(`📨 Attempting to send reset email to: ${user.email}`);
     const emailResult = await sendPasswordResetEmail({
       email: user.email,
       full_name: user.full_name,
@@ -476,7 +483,9 @@ async function forgotPassword(req, res) {
     });
 
     if (!emailResult.success) {
-      console.error('Failed to send reset email:', emailResult.error);
+      console.error('❌ Failed to send reset email:', emailResult.error);
+    } else {
+      console.log('✅ Reset email sent successfully!');
     }
 
     // Log activity

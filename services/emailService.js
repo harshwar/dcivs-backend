@@ -17,9 +17,10 @@ const DEFAULT_FROM = process.env.EMAIL_FROM || 'University NFT System <noreply@d
  */
 async function sendWelcomeEmail(student) {
     try {
+        console.log(`📧 Resend Sending | From: ${DEFAULT_FROM} | To: ${student.email.toLowerCase()}`);
         const { data, error } = await resend.emails.send({
             from: DEFAULT_FROM,
-            to: student.email,
+            to: student.email.toLowerCase(),
             subject: 'Welcome to University NFT Certificate System',
             html: `
 <!DOCTYPE html>
@@ -109,10 +110,11 @@ async function sendWelcomeEmail(student) {
 async function sendCertificateIssuedEmail({ email, studentName, certificateTitle, tokenId, transactionHash, department }) {
     try {
         const verifyUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/verify/${tokenId}`;
+        console.log(`📧 Resend Sending | From: ${DEFAULT_FROM} | To: ${email.toLowerCase()}`);
         
         const { data, error } = await resend.emails.send({
             from: DEFAULT_FROM,
-            to: email,
+            to: email.toLowerCase(),
             subject: `🎉 New Certificate Issued: ${certificateTitle}`,
             html: `
 <!DOCTYPE html>
@@ -245,9 +247,10 @@ async function verifyEmailConfig() {
  */
 async function sendPasswordResetEmail({ email, full_name, resetUrl }) {
     try {
+        console.log(`📧 Resend Sending | From: ${DEFAULT_FROM} | To: ${email.toLowerCase()}`);
         const { data, error } = await resend.emails.send({
             from: DEFAULT_FROM,
-            to: email,
+            to: email.toLowerCase(),
             subject: '🔑 Reset Your Password - University NFT System',
             html: `
 <!DOCTYPE html>
