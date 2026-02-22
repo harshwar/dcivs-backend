@@ -555,6 +555,73 @@ async function sendAccountActivatedEmail({ email, full_name }) {
         console.error('Account activation email error:', error);
         return { success: false, error: error.message };
     }
+/**
+ * sendLowBalanceAlertEmail:
+ * Urgent alert for administrators when the issuance wallet runs low on gas.
+ */
+async function sendLowBalanceAlertEmail({ adminEmail, currentBalance, threshold, networkName = "Ethereum Network" }) {
+    try {
+        console.log(`📧 Resend Urgent Alert | From: ${DEFAULT_FROM} | To: ${adminEmail.toLowerCase()}`);
+
+        const { data, error } = await resend.emails.send({
+            from: DEFAULT_FROM,
+            to: adminEmail.toLowerCase(),
+            subject: `⚠️ URGENT: Low Wallet Balance (${currentBalance} ETH)`,
+            html: `
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
+        .container { max-width: 600px; margin: 20px auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; }
+        .alert-header { background-color: #fee2e2; border: 1px solid #fca5a5; padding: 15px; border-radius: 8px; color: #991b1b; text-align: center; }
+        .alert-icon { font-size: 32px; display: block; margin-bottom: 10px; }
+        .content { padding: 30px 0; }
+        .stats-box { background-color: #f8fafc; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0; border-left: 4px solid #ef4444; margin: 20px 0; font-family: monospace; font-size: 14px; }
+        .footer { text-align: center; color: #64748b; font-size: 12px; padding-top: 20px; border-top: 1px solid #e2e8f0; }
+        .cta-btn { display: inline-block; background-color: #ef4444; color: white !important; font-weight: bold; text-decoration: none; padding: 12px 24px; border-radius: 6px; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="alert-header">
+            <span class="alert-icon">⚠️</span>
+            <h2 style="margin: 0; text-transform: uppercase; letter-spacing: 1px;">Low Gas Balance Alert</h2>
+        </div>
+        <div class="content">
+            <p>Administrator Action Required,</p>
+            <p>The operational blockchain wallet used for issuing University NFT Certificates is running critically low on funds.</p>
+            
+            <div class="stats-box">
+                <p style="margin: 5px 0;"><strong>Network:</strong> ${networkName}</p>
+                <p style="margin: 5px 0;"><strong>Warning Threshold:</strong> ${threshold} ETH</p>
+                <p style="margin: 5px 0; color: #ef4444; font-size: 18px;"><strong>Current Balance:</strong> <b>${currentBalance} ETH</b></p>
+            </div>
+            
+            <p style="color: #991b1b; font-weight: bold;">If the balance reaches 0.00 ETH, the system will be completely unable to mint new certificates or execute revocations.</p>
+            
+            <p>Please top up the administrative wallet immediately to prevent service disruption during certificate issuance ceremonies.</p>
+            
+            <div style="text-align: center;">
+                <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/admin/dashboard" class="cta-btn">Access Admin Dashboard</a>
+            </div>
+        </div>
+        <div class="footer">
+            <p>This is an automated operational alert from the University NFT System.</p>
+            <p>You received this because your email is registered as an active system administrator.</p>
+        </div>
+    </div>
+</body>
+</html>
+            `
+        });
+
+        if (error) throw error;
+        return { success: true, data };
+    } catch (error) {
+        console.error('Low balance alert email error:', error);
+        return { success: false, error: error.message };
+    }
 }
 
 module.exports = {
@@ -566,5 +633,6 @@ module.exports = {
     sendVerificationEmail,
     sendAccountActivatedEmail,
     sendTestEmail,
-    verifyEmailConfig
+    verifyEmailConfig,
+    sendLowBalanceAlertEmail
 };

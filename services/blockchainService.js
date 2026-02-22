@@ -254,11 +254,36 @@ async function getAdminWalletInfo() {
             ethPriceInr: ethPriceInr
         };
 
+        // --- 4. Low Balance Alert Logic ---
+        const ALERT_THRESHOLD = 0.05; // ETH
+        const ALERT_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
+        
+        if (parseFloat(balanceEth) < ALERT_THRESHOLD) {
+            const lastAlertTime = walletCache.lastAlertTime || 0;
+            if (now - lastAlertTime > ALERT_COOLDOWN_MS) {
+                console.warn(`[Blockchain Service] BALANCE CRITICAL: ${balanceEth} ETH. Triggering alert email.`);
+                
+                // Fire and forget email via emailService
+                const { sendLowBalanceAlertEmail } = require('./emailService');
+                
+                // Assuming admin email is coming from env or a fixed support address for now
+                // In a multi-admin setup, we would fetch from the DB.
+                const adminEmail = process.env.ADMIN_ALERT_EMAIL || 'support@dcivs.online';
+                
+                sendLowBalanceAlertEmail({
+                    adminEmail: adminEmail,
+                    currentBalance: parseFloat(balanceEth).toFixed(4),
+                    threshold: ALERT_THRESHOLD,
+                    networkName: process.env.RPC_URL?.includes('sepolia') ? 'Sepolia Testnet' : 'Ethereum Mainnet'
+                }).then(() => {
+                    walletCache.lastAlertTime = now; // Update cooldown only on successful trigger
+                }).catch(err => console.error("Failed to send low balance alert:", err));
+            }
+        }
+
         // Update cache
-        walletCache = {
-            data: result,
-            timestamp: now
-        };
+        walletCache.data = result;
+        walletCache.timestamp = now;
 
         return result;
     } catch (error) {
