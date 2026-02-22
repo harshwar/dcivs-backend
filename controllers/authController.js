@@ -210,7 +210,7 @@ async function verifyEmail(req, res) {
  */
 async function login(req, res) {
   try {
-    const { email, password } = req.body;
+    const { email, password, expectedRole } = req.body;
 
     // Validate input presence
     if (!email || !password) {
@@ -256,6 +256,11 @@ async function login(req, res) {
         .select('id, email, password_hash, username, role')
         .ilike('email', email.trim())
         .maybeSingle();
+    
+    // If frontend strictly requested 'admin', but user not found in admins table
+    if (expectedRole === 'admin' && !adminUser) {
+        return res.status(401).json({ error: 'Invalid admin credentials.' });
+    }
     
     if (adminUser) {
         const isAdminMatch = await bcrypt.compare(password, adminUser.password_hash);
