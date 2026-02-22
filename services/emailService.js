@@ -555,6 +555,7 @@ async function sendAccountActivatedEmail({ email, full_name }) {
         console.error('Account activation email error:', error);
         return { success: false, error: error.message };
     }
+}
 /**
  * sendLowBalanceAlertEmail:
  * Urgent alert for administrators when the issuance wallet runs low on gas.
