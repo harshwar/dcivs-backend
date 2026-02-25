@@ -99,8 +99,7 @@ async function verifyDocument(req, res) {
         const studentRoll = (req.body.studentRoll || '').toLowerCase();
 
         if (!studentName && !studentRoll) {
-             console.warn('[OCR Verification] Missing student name/roll number.');
-             return res.status(400).json({ error: 'Student name or roll number is required for verification.' });
+             console.log('[OCR Verification] Running blind discovery scan (No student provided).');
         }
 
         // 1. Preprocess the image with OpenCV to REMOVE TABLE LINES
@@ -288,6 +287,7 @@ async function verifyDocument(req, res) {
         // Return result
         res.json({
             match: isMatch,
+            raw_text: text, // Added raw text for frontend blind-scan auto-matching
             extracted_text: `Anonymized OCR Text (Ready for Gemini):\n\n${redactedText}`,
             title: jsonResponse.title,
             department: jsonResponse.department,
