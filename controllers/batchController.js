@@ -95,7 +95,9 @@ async function batchRegisterStudents(req, res) {
                         student_id_number: row.student_id_number,
                         course_name: row.course_name,
                         year: row.year,
-                        ethereum_address: address
+                        ethereum_address: address,
+                        status: 'ACTIVE',
+                        is_verified: true
                     }])
                     .select()
                     .single();
