@@ -142,8 +142,53 @@ async function rejectStudent(req, res) {
     }
 }
 
+/**
+ * PUT /api/admin/students/:id
+ * Updates specific editable fields for a student (pending or active).
+ */
+async function updateStudentDetails(req, res) {
+    try {
+        const { id } = req.params;
+        const { full_name, student_id_number, course_name, year } = req.body;
+
+        // Basic validation
+        if (!full_name || !student_id_number || !course_name || !year) {
+            return res.status(400).json({ error: 'All fields are required.' });
+        }
+
+        const { data: updatedStudent, error } = await supabase
+            .from('students')
+            .update({ full_name, student_id_number, course_name, year })
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) {
+            console.error('Database update error:', error);
+            return res.status(500).json({ error: 'Failed to update student details.' });
+        }
+
+        if (!updatedStudent) {
+             return res.status(404).json({ error: 'Student not found.' });
+        }
+
+        logActivity({
+            adminId: req.user.id,
+            action: 'EDIT_STUDENT',
+            details: `Updated details for student ${updatedStudent.email}`,
+            req
+        });
+
+        res.json({ message: 'Student updated successfully.', student: updatedStudent });
+    } catch (error) {
+        console.error('Update student error:', error);
+        res.status(500).json({ error: 'An unexpected error occurred while updating the student.' });
+    }
+}
+
 module.exports = {
     getPendingStudents,
     approveStudent,
-    rejectStudent
+    rejectStudent,
+    updateStudentDetails
 };

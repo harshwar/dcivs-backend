@@ -5,7 +5,8 @@ const { authenticateToken, requireAdmin } = require('../middleware/authMiddlewar
 const { 
     getPendingStudents, 
     approveStudent, 
-    rejectStudent 
+    rejectStudent,
+    updateStudentDetails
 } = require('../controllers/adminController');
 
 /**
@@ -25,6 +26,12 @@ router.post('/approve-student/:id', authenticateToken, requireAdmin, approveStud
  * Admin registration rejection
  */
 router.post('/reject-student/:id', authenticateToken, requireAdmin, rejectStudent);
+
+/**
+ * PUT /api/admin/students/:id
+ * Update student profile information
+ */
+router.put('/students/:id', authenticateToken, requireAdmin, updateStudentDetails);
 
 /**
  * GET /api/admin/logs
