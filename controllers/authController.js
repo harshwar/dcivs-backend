@@ -480,17 +480,45 @@ async function changePassword(req, res) {
     // 3. Hash New Password
     const newHashedPassword = await bcrypt.hash(newPassword, 10);
 
-    // 4. Update Database
+    // 4. Update Database (User password)
     const updatePayload = table === 'students' 
       ? { password: newHashedPassword } 
       : { password_hash: newHashedPassword };
+
+    // --- RE-ENCRYPT WALLET FOR STUDENTS ---
+    // If it's a student, we must re-encrypt their wallet so the new password works for it too!
+    if (table === 'students') {
+      try {
+        const { Wallet } = require('ethers'); // Keep ethers local to this block
+        // Get their current wallet
+        const { data: walletData, error: walletQueryError } = await supabase
+          .from('wallets')
+          .select('encrypted_json')
+          .eq('user_id', userId)
+          .single();
+
+        if (walletData && walletData.encrypted_json && !walletQueryError) {
+           // Decrypt with OLD password
+           const decryptedWallet = await Wallet.fromEncryptedJson(walletData.encrypted_json, oldPassword);
+           // Re-encrypt with NEW password
+           const newlyEncryptedJson = await decryptedWallet.encrypt(newPassword);
+
+           // Save new wallet json
+           await supabase
+             .from('wallets')
+             .update({ encrypted_json: newlyEncryptedJson })
+             .eq('user_id', userId);
+        }
+      } catch (walletErr) {
+        console.error("Failed to re-encrypt wallet during password change:", walletErr);
+        return res.status(400).json({ error: "Failed to update wallet encryption. Ensure your old password is correct." });
+      }
+    }
 
     const { error: updateError } = await supabase
       .from(table)
       .update(updatePayload)
       .eq('id', userId);
-
-    if (updateError) throw updateError;
 
     if (updateError) throw updateError;
 
