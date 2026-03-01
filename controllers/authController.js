@@ -733,6 +733,42 @@ async function resetPassword(req, res) {
   }
 }
 
+/**
+ * POST /api/auth/resend-verification
+ * Resends the email verification link for accounts still in PENDING_EMAIL state.
+ */
+async function resendVerificationEmail(req, res) {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email is required.' });
+
+    const { data: user, error } = await supabase
+      .from('students')
+      .select('id, email, full_name, status')
+      .ilike('email', email.trim())
+      .maybeSingle();
+
+    // Always return success to avoid email enumeration
+    if (!user || user.status !== 'PENDING_EMAIL') {
+      return res.json({ message: 'If your account is pending verification, a new link has been sent.' });
+    }
+
+    // Generate new token
+    const newToken = crypto.randomBytes(32).toString('hex');
+    await supabase.from('students')
+      .update({ verification_token: newToken })
+      .eq('id', user.id);
+
+    const { sendVerificationEmail } = require('../services/emailService');
+    await sendVerificationEmail({ email: user.email, full_name: user.full_name, token: newToken });
+
+    res.json({ message: 'A new verification link has been sent to your email.' });
+  } catch (error) {
+    console.error('Resend verification error:', error);
+    res.status(500).json({ error: 'Failed to resend verification email.' });
+  }
+}
+
 // Export the controller methods for use in routing
 module.exports = {
   register,
@@ -740,6 +776,7 @@ module.exports = {
   login,
   changePassword,
   forgotPassword,
-  resetPassword
+  resetPassword,
+  resendVerificationEmail
 };
 

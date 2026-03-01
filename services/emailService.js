@@ -625,6 +625,57 @@ async function sendLowBalanceAlertEmail({ adminEmail, currentBalance, threshold,
     }
 }
 
+/**
+ * sendRejectionEmail:
+ * Sent when an admin rejects a student's registration.
+ */
+async function sendRejectionEmail({ email, full_name, reason }) {
+    try {
+        console.log(`📧 Resend Rejection | From: ${DEFAULT_FROM} | To: ${email.toLowerCase()}`);
+        const { data, error } = await resend.emails.send({
+            from: DEFAULT_FROM,
+            to: email.toLowerCase(),
+            subject: '❌ Registration Update - University NFT System',
+            html: `
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
+        .container { max-width: 600px; margin: 20px auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; }
+        .header { text-align: center; padding-bottom: 20px; border-bottom: 2px solid #ef4444; }
+        .content { padding: 30px 0; }
+        .footer { text-align: center; color: #64748b; font-size: 12px; padding-top: 20px; border-top: 1px solid #e2e8f0; }
+        .reason-box { background-color: #fef2f2; padding: 16px; border-radius: 8px; border-left: 4px solid #ef4444; margin: 20px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1 style="color: #ef4444;">Registration Update</h1>
+        </div>
+        <div class="content">
+            <p>Hello <strong>${full_name}</strong>,</p>
+            <p>We regret to inform you that your registration application for the University NFT Certificate System could not be approved at this time.</p>
+            ${reason ? `<div class="reason-box"><strong>Reason:</strong> ${reason}</div>` : ''}
+            <p>If you believe this is an error or would like to clarify your details, please contact the administration office directly.</p>
+        </div>
+        <div class="footer">
+            <p>&copy; ${new Date().getFullYear()} University NFT Certificate System</p>
+        </div>
+    </div>
+</body>
+</html>
+            `
+        });
+        if (error) throw error;
+        return { success: true, data };
+    } catch (error) {
+        console.error('Rejection email error:', error);
+        return { success: false, error: error.message };
+    }
+}
+
 module.exports = {
     sendWelcomeEmail,
     sendCertificateIssuedEmail,
@@ -633,6 +684,7 @@ module.exports = {
     sendSecurityAlertEmail,
     sendVerificationEmail,
     sendAccountActivatedEmail,
+    sendRejectionEmail,
     sendTestEmail,
     verifyEmailConfig,
     sendLowBalanceAlertEmail

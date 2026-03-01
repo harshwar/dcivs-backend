@@ -6,6 +6,7 @@ const {
     getPendingStudents, 
     approveStudent, 
     rejectStudent,
+    bulkApproveStudents,
     updateStudentDetails
 } = require('../controllers/adminController');
 
@@ -32,6 +33,35 @@ router.post('/reject-student/:id', authenticateToken, requireAdmin, rejectStuden
  * Update student profile information
  */
 router.put('/students/:id', authenticateToken, requireAdmin, updateStudentDetails);
+
+/**
+ * POST /api/admin/bulk-approve
+ * Approve multiple students at once
+ */
+router.post('/bulk-approve', authenticateToken, requireAdmin, bulkApproveStudents);
+
+/**
+ * GET /api/admin/last-login/:userId
+ * Returns the last login timestamp for a student from activity logs
+ */
+router.get('/last-login/:userId', authenticateToken, async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const { data, error } = await supabase
+            .from('activity_logs')
+            .select('timestamp')
+            .eq('user_id', userId)
+            .in('action', ['LOGIN_STUDENT', 'LOGIN_PASSKEY'])
+            .order('timestamp', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+        if (error) throw error;
+        res.json({ last_login: data?.timestamp || null });
+    } catch (err) {
+        console.error('Last login fetch error:', err);
+        res.status(500).json({ error: 'Failed to fetch last login' });
+    }
+});
 
 /**
  * GET /api/admin/logs

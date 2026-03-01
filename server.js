@@ -22,7 +22,7 @@ const supabase = require("./db");
 // Import wallet creation utility
 const { createEncryptedWallet } = require("./services/walletService");
 // Import authentication logic (registration and login)
-const { register, verifyEmail, login, changePassword, forgotPassword, resetPassword } = require("./controllers/authController");
+const { register, verifyEmail, login, changePassword, forgotPassword, resetPassword, resendVerificationEmail } = require('./controllers/authController');
 // Import middleware to protect private routes
 const { authenticateToken, requireAdmin } = require("./middleware/authMiddleware");
 // Import NFT-specific routes
@@ -129,8 +129,9 @@ app.post("/api/auth/login", authLimiter, login);
 // Change Password route
 app.post("/api/auth/change-password", authenticateToken, authLimiter, changePassword);
 // Forgot / Reset Password (public, rate-limited)
-app.post("/api/auth/forgot-password", authLimiter, forgotPassword);
-app.post("/api/auth/reset-password", authLimiter, resetPassword);
+app.post('/api/auth/forgot-password', authLimiter, forgotPassword);
+app.post('/api/auth/reset-password', authLimiter, resetPassword);
+app.post('/api/auth/resend-verification', authLimiter, resendVerificationEmail);
 
 // 5. Two-Factor Authentication routes
 const { setup2FA, verifySetup2FA, validate2FA, disable2FA } = require("./controllers/twoFactorController");

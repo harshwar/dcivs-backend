@@ -1,6 +1,6 @@
 const supabase = require('../db');
 const { createEncryptedWallet } = require('../services/walletService');
-const { sendAccountActivatedEmail } = require('../services/emailService');
+const { sendAccountActivatedEmail, sendRejectionEmail } = require('../services/emailService');
 const { logActivity } = require('../services/activityLogger');
 
 /**
@@ -139,10 +139,72 @@ async function rejectStudent(req, res) {
             req
         });
 
+        // Notify student via email (non-blocking)
+        sendRejectionEmail({
+            email: student.email,
+            full_name: student.full_name || 'Student',
+            reason: reason || null
+        }).catch(e => console.error('Rejection email failed:', e));
+
         res.json({ message: 'Student registration rejected.' });
     } catch (error) {
         console.error('Reject student error:', error);
         res.status(500).json({ error: 'Failed to reject student.' });
+    }
+}
+
+/**
+ * POST /api/admin/bulk-approve
+ * Approves multiple students at once.
+ */
+async function bulkApproveStudents(req, res) {
+    try {
+        const { ids } = req.body; // Array of student IDs
+        if (!Array.isArray(ids) || ids.length === 0) {
+            return res.status(400).json({ error: 'No student IDs provided.' });
+        }
+
+        const results = { approved: [], failed: [] };
+
+        for (const id of ids) {
+            try {
+                const { data: student, error: fetchErr } = await supabase
+                    .from('students').select('*').eq('id', id).single();
+
+                if (fetchErr || !student || student.status !== 'PENDING_APPROVAL') {
+                    results.failed.push(id);
+                    continue;
+                }
+
+                const { address, encryptedJson } = await createEncryptedWallet('temporary-secure-wallet-key');
+
+                const { error: updateErr } = await supabase.from('students')
+                    .update({ status: 'ACTIVE', is_verified: true, ethereum_address: address })
+                    .eq('id', id);
+                if (updateErr) { results.failed.push(id); continue; }
+
+                await supabase.from('wallets').insert([{ user_id: id, public_address: address, encrypted_json: encryptedJson }]);
+
+                sendAccountActivatedEmail({ email: student.email, full_name: student.full_name })
+                    .catch(e => console.error('Activation email failed:', e));
+
+                results.approved.push(id);
+            } catch (e) {
+                results.failed.push(id);
+            }
+        }
+
+        logActivity({
+            adminId: req.user.id,
+            action: 'BULK_APPROVE',
+            details: `Bulk approved ${results.approved.length} students, ${results.failed.length} failed`,
+            req
+        });
+
+        res.json({ message: `Approved ${results.approved.length} students.`, results });
+    } catch (error) {
+        console.error('Bulk approve error:', error);
+        res.status(500).json({ error: 'Bulk approval failed.' });
     }
 }
 
@@ -194,5 +256,6 @@ module.exports = {
     getPendingStudents,
     approveStudent,
     rejectStudent,
+    bulkApproveStudents,
     updateStudentDetails
 };
