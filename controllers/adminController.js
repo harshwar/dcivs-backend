@@ -257,19 +257,15 @@ async function updateStudentDetails(req, res) {
  */
 async function reissueWallets(req, res) {
     try {
-        // TEST MODE: Only affect this specific account
-        const TEST_EMAIL = 'harshwardhan6363@gmail.com';
-
-        // 1. Fetch target student(s)
+        // 1. Fetch all student(s)
         const { data: students, error: fetchErr } = await supabase
             .from('students')
-            .select('id, email, full_name, status')
-            .eq('email', TEST_EMAIL);
+            .select('id, email, full_name, status');
 
         if (fetchErr) throw fetchErr;
 
         if (!students || students.length === 0) {
-            return res.status(404).json({ error: `No student found with email ${TEST_EMAIL}` });
+            return res.status(404).json({ error: 'No students found' });
         }
 
         const results = { success: 0, failed: 0, errors: [] };
