@@ -114,19 +114,23 @@ async function rejectStudent(req, res) {
 
         const { data: student, error: fetchErr } = await supabase
             .from('students')
-            .select('email')
+            .select('email, status')
             .eq('id', id)
             .single();
 
         if (fetchErr) return res.status(404).json({ error: 'Student not found.' });
 
-        // Update status or delete? Deleting keeps DB clean.
-        const { error: deleteErr } = await supabase
+        if (student.status !== 'PENDING_APPROVAL') {
+            return res.status(400).json({ error: 'Student is not in a pending approval state.' });
+        }
+
+        // Set status to REJECTED (keep record so login can show rejection message)
+        const { error: updateErr } = await supabase
             .from('students')
-            .delete()
+            .update({ status: 'REJECTED' })
             .eq('id', id);
 
-        if (deleteErr) throw deleteErr;
+        if (updateErr) throw updateErr;
 
         logActivity({
             adminId: req.user.id,
@@ -135,7 +139,7 @@ async function rejectStudent(req, res) {
             req
         });
 
-        res.json({ message: 'Student registration rejected and removed.' });
+        res.json({ message: 'Student registration rejected.' });
     } catch (error) {
         console.error('Reject student error:', error);
         res.status(500).json({ error: 'Failed to reject student.' });
