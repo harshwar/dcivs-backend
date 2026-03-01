@@ -166,10 +166,12 @@ app.get("/api/auth/me", authenticateToken, async (req, res) => {
         .select('id', { count: 'exact', head: true })
         .eq('user_id', req.user.id);
 
-      // Respond with the full profile object
+      // Respond with the full profile object nested under 'user' to maintain consistency with login payloads
       res.json({
-        ...fullProfile,
-        has_passkeys: (passkeyCount || 0) > 0
+        user: {
+          ...fullProfile,
+          has_passkeys: (passkeyCount || 0) > 0
+        }
       });
   } catch (error) {
       console.error("Error fetching me:", error);
