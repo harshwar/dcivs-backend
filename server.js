@@ -44,6 +44,10 @@ const app = express();
 // Server port configuration
 const port = 3001;
 
+// Trust the first proxy (e.g., Render, Nginx, load balancer)
+// This is required for express-rate-limit when deployed behind a proxy
+app.set('trust proxy', 1);
+
 // CORS configuration to allow local frontend access
 // CORS CONFIGURATION
 // Security headers (helmet)
