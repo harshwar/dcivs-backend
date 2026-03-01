@@ -1,6 +1,6 @@
 const supabase = require('../db');
 const { createEncryptedWallet } = require('../services/walletService');
-const { sendAccountActivatedEmail, sendRejectionEmail } = require('../services/emailService');
+const { sendAccountActivatedEmail, sendRejectionEmail, sendWalletReissueEmail } = require('../services/emailService');
 const { logActivity } = require('../services/activityLogger');
 
 /**
@@ -250,10 +250,100 @@ async function updateStudentDetails(req, res) {
     }
 }
 
+/**
+ * POST /api/admin/reissue-wallets
+ * Reissues wallets for students as part of the security upgrade.
+ * Currently scoped to test account only (harshwardhan6363@gmail.com).
+ */
+async function reissueWallets(req, res) {
+    try {
+        // TEST MODE: Only affect this specific account
+        const TEST_EMAIL = 'harshwardhan6363@gmail.com';
+
+        // 1. Fetch target student(s)
+        const { data: students, error: fetchErr } = await supabase
+            .from('students')
+            .select('id, email, full_name, status')
+            .eq('email', TEST_EMAIL);
+
+        if (fetchErr) throw fetchErr;
+
+        if (!students || students.length === 0) {
+            return res.status(404).json({ error: `No student found with email ${TEST_EMAIL}` });
+        }
+
+        const results = { success: 0, failed: 0, errors: [] };
+
+        for (const student of students) {
+            try {
+                // 2. Generate new wallet with temporary key
+                const { address, encryptedJson } = await createEncryptedWallet('temporary-secure-wallet-key');
+
+                // 3. Delete old wallet record
+                await supabase
+                    .from('wallets')
+                    .delete()
+                    .eq('user_id', student.id);
+
+                // 4. Insert new wallet record
+                const { error: walletErr } = await supabase
+                    .from('wallets')
+                    .insert([{
+                        user_id: student.id,
+                        public_address: address,
+                        encrypted_json: encryptedJson
+                    }]);
+
+                if (walletErr) throw walletErr;
+
+                // 5. Update student record with new address and reset PIN flag
+                const { error: updateErr } = await supabase
+                    .from('students')
+                    .update({
+                        ethereum_address: address,
+                        wallet_pin_set: false
+                    })
+                    .eq('id', student.id);
+
+                if (updateErr) throw updateErr;
+
+                // 6. Send notification email
+                sendWalletReissueEmail({
+                    email: student.email,
+                    full_name: student.full_name
+                }).catch(e => console.error('Reissue email failed:', e));
+
+                results.success++;
+            } catch (err) {
+                results.failed++;
+                results.errors.push({ email: student.email, error: err.message });
+            }
+        }
+
+        // 7. Log activity
+        logActivity({
+            adminId: req.user.id,
+            action: 'REISSUE_WALLETS',
+            details: `Reissued wallets for ${results.success} student(s). Failed: ${results.failed}`,
+            req
+        });
+
+        res.json({
+            message: `Wallet reissue complete: ${results.success} succeeded, ${results.failed} failed.`,
+            results
+        });
+
+    } catch (error) {
+        console.error('Reissue wallets error:', error);
+        res.status(500).json({ error: 'Failed to reissue wallets.' });
+    }
+}
+
 module.exports = {
     getPendingStudents,
     approveStudent,
     rejectStudent,
     bulkApproveStudents,
-    updateStudentDetails
+    updateStudentDetails,
+    reissueWallets
 };

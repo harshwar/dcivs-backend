@@ -676,6 +676,68 @@ async function sendRejectionEmail({ email, full_name, reason }) {
     }
 }
 
+/**
+ * sendWalletReissueEmail:
+ * Sent when the admin reissues a student's wallet as part of a security upgrade.
+ */
+async function sendWalletReissueEmail({ email, full_name }) {
+    try {
+        const loginUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/login`;
+
+        console.log(`📧 Resend Wallet Reissue | From: ${DEFAULT_FROM} | To: ${email.toLowerCase()}`);
+
+        const { data, error } = await resend.emails.send({
+            from: DEFAULT_FROM,
+            to: email.toLowerCase(),
+            subject: '🔐 Important: Your Wallet Has Been Upgraded',
+            html: `
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
+        .container { max-width: 600px; margin: 20px auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; }
+        .header { text-align: center; padding-bottom: 20px; border-bottom: 2px solid #818cf8; }
+        .content { padding: 30px 0; }
+        .footer { text-align: center; color: #64748b; font-size: 12px; padding-top: 20px; border-top: 1px solid #e2e8f0; }
+        .button { display: inline-block; padding: 12px 24px; background-color: #6366f1; color: white !important; text-decoration: none; border-radius: 8px; font-weight: bold; margin-top: 20px; }
+        .warning { background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; padding: 15px; margin: 20px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1 style="color: #6366f1;">🔐 Wallet Security Upgrade</h1>
+        </div>
+        <div class="content">
+            <p>Hello <strong>${full_name}</strong>,</p>
+            <p>We sincerely apologize for the inconvenience. As part of a critical security upgrade to the <strong>University NFT Certificate System</strong>, your blockchain wallet has been reissued.</p>
+            <div class="warning">
+                <strong>⚠️ Action Required:</strong> Please log in to your account and visit the <strong>Wallet Dashboard</strong>. You will be guided through a simple setup process to secure your new wallet with a <strong>6-digit PIN</strong>. During this process, you will also receive a <strong>12-word recovery phrase</strong> — please save it in a safe place.
+            </div>
+            <p>This upgrade ensures that your wallet is properly secured and that you have full control over your digital credentials.</p>
+            <p>We appreciate your patience and understanding.</p>
+            <div style="text-align: center;">
+                <a href="${loginUrl}" class="button">Log In & Secure Your Wallet</a>
+            </div>
+        </div>
+        <div class="footer">
+            <p>&copy; ${new Date().getFullYear()} University NFT Certificate System</p>
+        </div>
+    </div>
+</body>
+</html>
+            `
+        });
+
+        if (error) throw error;
+        return { success: true, data };
+    } catch (error) {
+        console.error('Wallet reissue email error:', error);
+        return { success: false, error: error.message };
+    }
+}
+
 module.exports = {
     sendWelcomeEmail,
     sendCertificateIssuedEmail,
@@ -687,5 +749,6 @@ module.exports = {
     sendRejectionEmail,
     sendTestEmail,
     verifyEmailConfig,
-    sendLowBalanceAlertEmail
+    sendLowBalanceAlertEmail,
+    sendWalletReissueEmail
 };

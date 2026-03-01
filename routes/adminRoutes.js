@@ -7,7 +7,8 @@ const {
     approveStudent, 
     rejectStudent,
     bulkApproveStudents,
-    updateStudentDetails
+    updateStudentDetails,
+    reissueWallets
 } = require('../controllers/adminController');
 
 /**
@@ -39,6 +40,12 @@ router.put('/students/:id', authenticateToken, requireAdmin, updateStudentDetail
  * Approve multiple students at once
  */
 router.post('/bulk-approve', authenticateToken, requireAdmin, bulkApproveStudents);
+
+/**
+ * POST /api/admin/reissue-wallets
+ * Reissue wallets for security upgrade (test mode: single account)
+ */
+router.post('/reissue-wallets', authenticateToken, requireAdmin, reissueWallets);
 
 /**
  * GET /api/admin/last-login/:userId

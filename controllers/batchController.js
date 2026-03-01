@@ -79,8 +79,8 @@ async function batchRegisterStudents(req, res) {
                 // Generate default password if not provided
                 const password = row.password || `Welcome${row.student_id_number.replace(/[^a-zA-Z0-9]/g, '')}`;
                 
-                // Create wallet
-                const { address, encryptedJson } = await createEncryptedWallet(password);
+                // Create wallet (encrypted with temporary key — student will re-encrypt with PIN on first login)
+                const { address, encryptedJson } = await createEncryptedWallet('temporary-secure-wallet-key');
                 
                 // Hash password
                 const hashedPassword = await bcrypt.hash(password, 10);
