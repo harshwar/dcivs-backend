@@ -150,7 +150,7 @@ app.get("/api/auth/me", authenticateToken, async (req, res) => {
       // Fetch extended profile details
       const { data: fullProfile, error } = await supabase
           .from('students')
-          .select('id, full_name, email, student_id_number, course_name, year, ethereum_address, totp_enabled, wallet_pin_set')
+          .select('id, full_name, email, student_id_number, course_name, year, ethereum_address, totp_enabled, wallet_pin_set, is_verified, created_at')
           .eq('id', req.user.id)
           .single();
       
