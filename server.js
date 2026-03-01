@@ -91,6 +91,12 @@ app.use('/api/', csrfProtection);
 // CSRF token endpoint - clients call this to get a token before making POST requests
 app.get('/api/csrf-token', getCsrfToken);
 
+// --- KEEP-ALIVE ENDPOINT (no auth, no rate limit) ---
+// Lightweight health check to prevent free-tier hosting (Render) from sleeping
+app.get('/api/ping', (req, res) => {
+  res.json({ status: 'alive', timestamp: new Date().toISOString() });
+});
+
 // --- API ROUTES ---
 
 // 1. NFT-related endpoints (Minting, Issuance)
