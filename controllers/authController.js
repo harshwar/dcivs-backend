@@ -749,3 +749,4 @@ module.exports = {
   resetPassword,
   resendVerificationEmail
 };
+

@@ -69,13 +69,10 @@ async function createWallet(req, res) {
 
     if (insertError) throw insertError;
 
-    // 4. Update student record with address and flag that they established a secure PIN
+    // 4. Update student record with address (for easy lookup)
     await supabase
       .from('students')
-      .update({ 
-         ethereum_address: address,
-         wallet_pin_set: true
-      })
+      .update({ ethereum_address: address })
       .eq('id', userId);
 
     // Log
