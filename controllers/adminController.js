@@ -30,8 +30,6 @@ async function getPendingStudents(req, res) {
 async function approveStudent(req, res) {
     try {
         const { id } = req.params;
-        const { password_temporary } = req.body; // In case we need it, but usually students set their own during reg
-
         // 1. Fetch student details
         const { data: student, error: fetchErr } = await supabase
             .from('students')
