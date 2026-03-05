@@ -19,14 +19,22 @@ async function tts(req, res) {
     const voice = req.query.voice || 'en-US-AriaNeural';
 
     // Generate the audio stream
-    // edge-tts-universal returns an array of Uint8Arrays in its generator
+    console.log(`🎙️ Synthesizing: "${text.substring(0, 50)}..." [Voice: ${voice}]`);
+    
     res.setHeader('Content-Type', 'audio/mpeg');
-    res.setHeader('Transfer-Encoding', 'chunked');
 
+    let chunkCount = 0;
+    let byteCount = 0;
+    
     for await (const chunk of tts.synthesizeStream(text, voice)) {
-      res.write(chunk);
+      if (chunk.type === 'audio') {
+        res.write(chunk.data);
+        byteCount += chunk.data.length;
+        chunkCount++;
+      }
     }
     
+    console.log(`✅ TTS Stream Complete. Sent ${chunkCount} chunks (${byteCount} bytes).`);
     res.end();
   } catch (err) {
     console.error('TTS Proxy Error:', err);
