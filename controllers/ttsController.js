@@ -1,44 +1,45 @@
-const { EdgeTTS } = require('edge-tts-universal');
+const EdgeTTS = require('node-edge-tts');
 
 /**
- * Pro Neural TTS Proxy
- * Converts text to high-quality human-like speech using Microsoft Edge's Neural engine.
+ * Pro Neural TTS Proxy (node-edge-tts version)
+ * More stable for 2026 Edge TTS protocols.
  */
 async function tts(req, res) {
+  const requestId = Math.random().toString(36).substring(7);
   try {
     const text = req.query.text;
     if (!text) {
       return res.status(400).json({ error: 'Text query parameter is required' });
     }
 
-    // Initialize EdgeTTS
-    const tts = new EdgeTTS();
-
-    // Voice selection logic (Favoring smooth natural voices)
-    // We allow passing a voice name if the frontend wants to experiment
     const voice = req.query.voice || 'en-US-AriaNeural';
+    console.log(`[${requestId}] 🎙️ TTS Request (node-edge-tts): "${text.substring(0, 30)}..."`);
 
-    // Generate the audio stream
-    console.log(`🎙️ Synthesizing: "${text.substring(0, 50)}..." [Voice: ${voice}]`);
+    const tts = new EdgeTTS();
     
-    res.setHeader('Content-Type', 'audio/mpeg');
+    // node-edge-tts's ttsPromise returns the audio data as a Buffer
+    // This is often more resilient than raw chunked streams for proxying
+    const audioBuffer = await tts.ttsPromise(text, voice);
 
-    let chunkCount = 0;
-    let byteCount = 0;
-    
-    for await (const chunk of tts.synthesizeStream(text, voice)) {
-      if (chunk.type === 'audio') {
-        res.write(chunk.data);
-        byteCount += chunk.data.length;
-        chunkCount++;
-      }
+    if (!audioBuffer || audioBuffer.length === 0) {
+      throw new Error('Empty audio buffer received');
     }
+
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Content-Length', audioBuffer.length);
+    res.setHeader('Cache-Control', 'public, max-age=3600');
     
-    console.log(`✅ TTS Stream Complete. Sent ${chunkCount} chunks (${byteCount} bytes).`);
-    res.end();
+    res.send(audioBuffer);
+    
+    console.log(`[${requestId}] ✅ Success: Sent ${audioBuffer.length} bytes`);
   } catch (err) {
-    console.error('TTS Proxy Error:', err);
-    res.status(500).json({ error: 'Failed to synthesize speech' });
+    console.error(`[${requestId}] ❌ TTS Error:`, err.message);
+    if (!res.headersSent) {
+      res.status(500).json({ 
+        error: 'Failed to synthesize speech', 
+        message: err.message 
+      });
+    }
   }
 }
 
