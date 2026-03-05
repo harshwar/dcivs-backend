@@ -1,5 +1,6 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const fs = require('fs');
+const { createJob, updateJobStep, completeJob, failJob } = require('../services/jobService');
 
 // Initialize Gemini API
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -304,5 +305,210 @@ async function verifyDocument(req, res) {
         res.status(500).json({ error: "Failed to verify document locally" });
     }
 }
+/**
+ * Controller: startVerification (NEW — Async/Polling version)
+ * Creates a background job, returns jobId immediately,
+ * then runs the full verification pipeline asynchronously.
+ */
+async function startVerification(req, res) {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No document image provided.' });
+        }
 
-module.exports = { analyzeCertificate, verifyDocument };
+        const studentName = (req.body.studentName || '').toLowerCase();
+        const studentRoll = (req.body.studentRoll || '').toLowerCase();
+
+        // Create a 4-step background job
+        const jobId = await createJob('verify_document', 4, {
+            fileName: req.file.originalname,
+            studentName: req.body.studentName || '',
+            studentRoll: req.body.studentRoll || ''
+        }, req.user ? req.user.id : null);
+
+        // Return jobId immediately
+        res.status(202).json({ jobId, message: 'Verification started. Poll /api/job-status/' + jobId });
+
+        // Fire pipeline async (no await!)
+        runVerificationPipeline(jobId, {
+            filePath: req.file.path,
+            originalName: req.file.originalname,
+            studentName,
+            studentRoll
+        }).catch(err => {
+            console.error(`[Verify Pipeline] Unhandled error in job ${jobId}:`, err);
+            failJob(jobId, err.message || 'Unexpected verification error');
+        });
+
+    } catch (error) {
+        console.error('Start Verification Error:', error);
+        if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+        res.status(500).json({ error: error.message || 'Failed to start verification.' });
+    }
+}
+
+/**
+ * Runs the full verification pipeline in the background.
+ * Updates the jobs table after each step so the frontend can poll progress.
+ */
+async function runVerificationPipeline(jobId, params) {
+    const { filePath, originalName, studentName, studentRoll } = params;
+    let processedImagePath = filePath + '-processed.png';
+
+    try {
+        // --- Step 1: OpenCV Preprocessing ---
+        await updateJobStep(jobId, 1, 'OpenCV: Removing table gridlines...', 10);
+
+        const cv = require('@techstark/opencv-js');
+        await new Promise(resolve => {
+            if (cv.getBuildInformation) resolve();
+            else cv.onRuntimeInitialized = resolve;
+        });
+
+        const { createCanvas, loadImage } = require('canvas');
+        const img = await loadImage(filePath);
+        const canvas = createCanvas(img.width, img.height);
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, img.width, img.height);
+
+        const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        let src = cv.matFromImageData(imgData);
+
+        const gray = new cv.Mat();
+        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+
+        const thresh = new cv.Mat();
+        cv.adaptiveThreshold(gray, thresh, 255, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY_INV, 15, -2);
+
+        const horizontalSize = Math.max(10, Math.floor(src.cols / 30));
+        const verticalSize = Math.max(10, Math.floor(src.rows / 30));
+        const horizontalKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(horizontalSize, 1));
+        const verticalKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(1, verticalSize));
+
+        const horizontalMask = new cv.Mat();
+        cv.morphologyEx(thresh, horizontalMask, cv.MORPH_OPEN, horizontalKernel);
+        const verticalMask = new cv.Mat();
+        cv.morphologyEx(thresh, verticalMask, cv.MORPH_OPEN, verticalKernel);
+
+        const linesMask = new cv.Mat();
+        cv.add(horizontalMask, verticalMask, linesMask);
+
+        const dilateKernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
+        const dilatedLinesMask = new cv.Mat();
+        cv.dilate(linesMask, dilatedLinesMask, dilateKernel, new cv.Point(-1, -1), 1, cv.BORDER_CONSTANT, cv.morphologyDefaultBorderValue());
+
+        const result = gray.clone();
+        for (let i = 0; i < result.rows; i++) {
+            for (let j = 0; j < result.cols; j++) {
+                if (dilatedLinesMask.ucharPtr(i, j)[0] > 128) {
+                    result.ucharPtr(i, j)[0] = 255;
+                }
+            }
+        }
+
+        const rgbaResult = new cv.Mat();
+        cv.cvtColor(result, rgbaResult, cv.COLOR_GRAY2RGBA, 0);
+        const outCanvas = createCanvas(result.cols, result.rows);
+        const outCtx = outCanvas.getContext('2d');
+        const outImgData = outCtx.createImageData(result.cols, result.rows);
+        outImgData.data.set(rgbaResult.data);
+        outCtx.putImageData(outImgData, 0, 0);
+
+        const buffer = outCanvas.toBuffer('image/png');
+        fs.writeFileSync(processedImagePath, buffer);
+
+        // Cleanup OpenCV Mats
+        src.delete(); gray.delete(); thresh.delete();
+        horizontalKernel.delete(); verticalKernel.delete();
+        horizontalMask.delete(); verticalMask.delete();
+        linesMask.delete(); dilateKernel.delete(); dilatedLinesMask.delete();
+        result.delete(); rgbaResult.delete();
+
+        console.log(`[Verify ${jobId}] Step 1: OpenCV gridline removal complete.`);
+
+        // --- Step 2: OCR with Tesseract ---
+        await updateJobStep(jobId, 2, 'Tesseract: Extracting text via OCR...', 35);
+
+        const Tesseract = require('tesseract.js');
+        const worker = await Tesseract.createWorker('eng', 1);
+        await worker.setParameters({ tessedit_pageseg_mode: '11' });
+        const { data: { text } } = await worker.recognize(processedImagePath);
+        await worker.terminate();
+
+        console.log(`[Verify ${jobId}] Step 2: OCR extraction complete.`);
+
+        // --- Step 3: PII Redaction + Fuzzy Matching ---
+        await updateJobStep(jobId, 3, 'Redacting PII & verifying identity...', 60);
+
+        const normalizedText = text.toLowerCase();
+        const stringSimilarity = require('string-similarity');
+
+        let isMatch = false;
+        let matchedName = '';
+
+        if (studentRoll && normalizedText.includes(studentRoll)) {
+            isMatch = true;
+            matchedName = studentRoll;
+        }
+
+        if (!isMatch && studentName) {
+            const originalParts = studentName.split(' ').filter(p => p.length > 2);
+            const ocrWords = normalizedText.replace(/[^a-z]+/g, ' ').split(' ').filter(w => w.length > 2);
+            if (ocrWords.length > 0) {
+                for (const part of originalParts) {
+                    const matches = stringSimilarity.findBestMatch(part, ocrWords);
+                    if (matches.bestMatch.rating >= 0.8) {
+                        isMatch = true;
+                        matchedName = studentName;
+                        break;
+                    }
+                }
+            }
+        }
+
+        const redactedText = redactPII(text, studentName, studentRoll);
+
+        console.log(`[Verify ${jobId}] Step 3: PII redaction complete. Match: ${isMatch}`);
+
+        // --- Step 4: Gemini AI Classification ---
+        await updateJobStep(jobId, 4, 'Gemini AI: Classifying certificate...', 80);
+
+        const prompt = `Analyze this anonymized OCR text of a certificate or marksheet. Return a pure JSON object (without any markdown formatting like \`\`\`json) containing exactly these three string fields: 'title' (the name of the degree or achievement, e.g., 'B.Sc. Information Technology'), 'department' (the faculty, school, or department. If not explicitly stated, infer it from the programme name, e.g., 'Information Technology' for 'B.SC. (INFORMATION TECHNOLOGY)'), and 'description' (a short, one-sentence summary of the achievement, including CGPA or grades if present, following this strict grammar format: 'The student successfully completed [Title] achieving a SGPA/CGPA of [Grade]'.). IMPORTANT: ensure the title and department are properly Title Cased (e.g., 'Information Technology', not 'INFORMATION TECHNOLOGY'). If a field cannot be determined, use an empty string.\n\nText:\n${redactedText}`;
+
+        const aiResult = await model.generateContent(prompt);
+        const response = await aiResult.response;
+        let aiText = response.text().replace(/```json/gi, '').replace(/```/g, '').trim();
+        let jsonResponse = { title: '', department: '', description: '' };
+        try {
+            jsonResponse = JSON.parse(aiText);
+        } catch (e) {
+            console.warn(`[Verify ${jobId}] Failed to parse Gemini JSON:`, aiText);
+        }
+
+        console.log(`[Verify ${jobId}] Step 4: Gemini classification complete.`);
+
+        // Cleanup temp files
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+        if (fs.existsSync(processedImagePath)) fs.unlinkSync(processedImagePath);
+
+        // --- Complete! ---
+        await completeJob(jobId, {
+            match: isMatch,
+            raw_text: text,
+            extracted_text: `Anonymized OCR Text:\n\n${redactedText}`,
+            title: jsonResponse.title,
+            department: jsonResponse.department,
+            description: jsonResponse.description
+        });
+
+        console.log(`[Verify ${jobId}] ✅ Verification pipeline complete!`);
+
+    } catch (error) {
+        console.error(`[Verify ${jobId}] ❌ Failed:`, error.message);
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+        if (fs.existsSync(processedImagePath)) fs.unlinkSync(processedImagePath);
+        await failJob(jobId, error.message || 'Verification pipeline failed');
+    }
+}
+
+module.exports = { analyzeCertificate, verifyDocument, startVerification };

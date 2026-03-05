@@ -6,6 +6,7 @@ const {
     getPendingStudents, 
     approveStudent, 
     rejectStudent,
+    startBulkApprove,
     bulkApproveStudents,
     updateStudentDetails,
     reissueWallets
@@ -36,7 +37,13 @@ router.post('/reject-student/:id', authenticateToken, requireAdmin, rejectStuden
 router.put('/students/:id', authenticateToken, requireAdmin, updateStudentDetails);
 
 /**
- * POST /api/admin/bulk-approve
+ * POST /api/admin/start-bulk-approve (NEW — Async polling version)
+ * Approves multiple students asynchronously
+ */
+router.post('/start-bulk-approve', authenticateToken, requireAdmin, startBulkApprove);
+
+/**
+ * POST /api/admin/bulk-approve (LEGACY — Synchronous version)
  * Approve multiple students at once
  */
 router.post('/bulk-approve', authenticateToken, requireAdmin, bulkApproveStudents);

@@ -2,6 +2,7 @@ const supabase = require('../db');
 const { createEncryptedWallet } = require('../services/walletService');
 const { sendAccountActivatedEmail, sendRejectionEmail, sendWalletReissueEmail } = require('../services/emailService');
 const { logActivity } = require('../services/activityLogger');
+const { createJob, updateJobStep, completeJob, failJob } = require('../services/jobService');
 
 /**
  * GET /api/admin/pending-students
@@ -152,8 +153,120 @@ async function rejectStudent(req, res) {
 }
 
 /**
- * POST /api/admin/bulk-approve
- * Approves multiple students at once.
+ * POST /api/admin/start-bulk-approve (NEW — Async/Polling version)
+ * Approves multiple students asynchronously.
+ */
+async function startBulkApprove(req, res) {
+    try {
+        const { ids } = req.body; // Array of student IDs
+        if (!Array.isArray(ids) || ids.length === 0) {
+            return res.status(400).json({ error: 'No student IDs provided.' });
+        }
+
+        // Create a background job (1 step per student)
+        const jobId = await createJob('bulk_approve', ids.length, {
+            totalStudents: ids.length
+        }, req.user ? req.user.id : null);
+
+        // Return jobId immediately
+        res.status(202).json({ 
+            jobId, 
+            message: `Bulk approval started for ${ids.length} students. Poll /api/job-status/${jobId}` 
+        });
+
+        // Fire pipeline async (no await)
+        runBulkApprovePipeline(jobId, {
+            ids,
+            adminId: req.user.id
+        }).catch(err => {
+            console.error(`[Bulk Approve Pipeline] Unhandled error in job ${jobId}:`, err);
+            failJob(jobId, err.message || 'Unexpected bulk approve error');
+        });
+
+    } catch (error) {
+        console.error('Start Bulk Approve Error:', error);
+        res.status(500).json({ error: 'Failed to start bulk approval.' });
+    }
+}
+
+/**
+ * Runs the bulk approval loop in the background.
+ * Updates the jobs table after each student so the frontend can poll progress.
+ */
+async function runBulkApprovePipeline(jobId, params) {
+    const { ids, adminId } = params;
+    const results = { approved: [], failed: [] };
+
+    try {
+        // We'll process them sequentially to avoid overwhelming RPC/DB
+        for (let i = 0; i < ids.length; i++) {
+            const id = ids[i];
+            const currentStep = i + 1;
+            const percentage = Math.round((currentStep / ids.length) * 100);
+
+            await updateJobStep(jobId, currentStep, `Approving student ${currentStep} of ${ids.length}...`, percentage);
+
+            try {
+                const { data: student, error: fetchErr } = await supabase
+                    .from('students').select('*').eq('id', id).single();
+
+                if (fetchErr || !student || student.status !== 'PENDING_APPROVAL') {
+                    results.failed.push(id);
+                    continue;
+                }
+
+                // Create blockchain wallet
+                const { address, encryptedJson } = await createEncryptedWallet('temporary-secure-wallet-key');
+
+                const { error: updateErr } = await supabase.from('students')
+                    .update({ status: 'ACTIVE', is_verified: true, ethereum_address: address })
+                    .eq('id', id);
+                
+                if (updateErr) {
+                    results.failed.push(id); 
+                    continue; 
+                }
+
+                await supabase.from('wallets').insert([{ user_id: id, public_address: address, encrypted_json: encryptedJson }]);
+
+                sendAccountActivatedEmail({ email: student.email, full_name: student.full_name })
+                    .catch(e => console.error(`Activation email failed for ${student.email}:`, e));
+
+                results.approved.push(id);
+
+            } catch (e) {
+                console.error(`[Bulk Approve Pipeline ${jobId}] Failed for student ${id}:`, e);
+                results.failed.push(id);
+            }
+        }
+
+        logActivity({
+            adminId: adminId,
+            action: 'BULK_APPROVE',
+            details: `Bulk approved ${results.approved.length} students, ${results.failed.length} failed`,
+            req: null // Can't easily pass req object async
+        });
+
+        const finalStatus = results.failed.length > 0 && results.approved.length === 0 ? 'failed' : 'completed';
+        
+        if (finalStatus === 'failed') {
+             await failJob(jobId, `All ${ids.length} approvals failed.`);
+             await supabase.from('jobs').update({ result: results }).eq('id', jobId);
+        } else {
+             await completeJob(jobId, results);
+        }
+
+        console.log(`[Bulk Approve Pipeline ${jobId}] ✅ Complete. Approved: ${results.approved.length}, Failed: ${results.failed.length}`);
+
+    } catch (error) {
+        console.error(`[Bulk Approve Pipeline ${jobId}] ❌ Fatal Error:`, error.message);
+        await failJob(jobId, error.message || 'Bulk approval pipeline encountered a fatal error');
+    }
+}
+
+/**
+ * POST /api/admin/bulk-approve (LEGACY)
+ * Approves multiple students at once synchronously.
  */
 async function bulkApproveStudents(req, res) {
     try {
@@ -340,6 +453,7 @@ module.exports = {
     approveStudent,
     rejectStudent,
     bulkApproveStudents,
+    startBulkApprove,
     updateStudentDetails,
     reissueWallets
 };

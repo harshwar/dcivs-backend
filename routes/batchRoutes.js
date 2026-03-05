@@ -9,6 +9,7 @@ const path = require('path');
 const { authenticateToken } = require('../middleware/authMiddleware');
 const {
     batchRegisterStudents,
+    startBatchRegister,
     getStudentTemplate
 } = require('../controllers/batchController');
 const { requireAdmin } = require('../middleware/authMiddleware');
@@ -31,7 +32,10 @@ const upload = multer({
 router.get('/template/students', getStudentTemplate);
 
 // --- BATCH OPERATIONS (Admin only) ---
-// POST /api/batch/students - Bulk register students from CSV
+// POST /api/batch/start-register (NEW — Async polling version)
+router.post('/start-register', authenticateToken, requireAdmin, upload.single('file'), startBatchRegister);
+
+// POST /api/batch/students (LEGACY — Synchronous version)
 router.post('/students', authenticateToken, requireAdmin, upload.single('file'), batchRegisterStudents);
 
 module.exports = router;
