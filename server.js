@@ -122,6 +122,10 @@ const batchRoutes = require("./routes/batchRoutes");
 app.use("/api/batch", batchRoutes);
 app.use("/api/admin", require("./routes/adminRoutes"));
 
+// Job status polling endpoint (background jobs progress tracker)
+const jobRoutes = require("./routes/jobRoutes");
+app.use("/api/job-status", jobRoutes);
+
 // 4. Passkey (WebAuthn) routes
 const passkeyRoutes = require("./routes/passkeyRoutes");
 app.use("/api/auth/passkey", passkeyRoutes);

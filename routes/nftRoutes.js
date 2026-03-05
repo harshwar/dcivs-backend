@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
-const { issueNFT, getWalletInfo } = require('../controllers/nftController');
+const { issueNFT, startIssuance, getWalletInfo } = require('../controllers/nftController');
 const { authenticateToken, requireAdmin } = require('../middleware/authMiddleware');
 const { mintLimiter } = require('../middleware/rateLimiter');
 
@@ -15,8 +15,13 @@ const upload = multer({
 // Returns admin's ETH balance and estimated gas for confirmation screens
 router.get('/wallet-info', authenticateToken, requireAdmin, getWalletInfo);
 
-// POST /api/nft/issue
-// Authenticate token + admin role + rate limit minting (10/hour) + file upload
+// POST /api/nft/start-issue (NEW — Async polling version)
+// Returns { jobId } immediately, runs pipeline in background
+// Frontend polls GET /api/job-status/:jobId for progress
+router.post('/start-issue', authenticateToken, requireAdmin, mintLimiter, upload.single('file'), startIssuance);
+
+// POST /api/nft/issue (LEGACY — Synchronous version)
+// Kept for backward compatibility with batch operations
 router.post('/issue', authenticateToken, requireAdmin, mintLimiter, upload.single('file'), issueNFT);
 
 module.exports = router;

@@ -8,106 +8,125 @@ const { pinFileToIPFS, pinJSONToIPFS } = require('../utils/pinataHelpers');
 const { mintNFT } = require('../services/blockchainService');
 // Email service for notifications
 const { sendCertificateIssuedEmail } = require('../services/emailService');
+// Job service for background job management
+const { createJob, updateJobStep, completeJob, failJob } = require('../services/jobService');
 
 /**
- * Controller: issueNFT
- * Manages the entire lifecycle of creating an academic certificate NFT:
- * 1. File Upload to IPFS
- * 2. Metadata Creation & Upload
- * 3. Blockchain Minting
- * 4. Database Recording (linked across tables)
+ * Controller: startIssuance (NEW — Async/Polling version)
+ * Creates a background job, returns jobId immediately,
+ * then runs the full pipeline asynchronously.
  */
-async function issueNFT(req, res) {
+async function startIssuance(req, res) {
     try {
-        // --- 1. Extract Data from Request Body ---
         const { recipientId, title, description, department } = req.body;
-        const file = req.file; // Provided by multer middleware
+        const file = req.file;
 
-        // --- 2. Input Validation ---
-        if (!file) {
-            return res.status(400).json({ error: "Certificate file is required." });
-        }
-        if (!recipientId) {
-            return res.status(400).json({ error: "Student (Recipient) is required." });
-        }
-        if (!title) {
-            return res.status(400).json({ error: "Certificate Title is required." });
-        }
+        // --- Input Validation ---
+        if (!file) return res.status(400).json({ error: "Certificate file is required." });
+        if (!recipientId) return res.status(400).json({ error: "Student (Recipient) is required." });
+        if (!title) return res.status(400).json({ error: "Certificate Title is required." });
 
-        console.log(`[NFT Issue] Starting issuance for Student ID: ${recipientId}, Title: ${title}`);
+        // Create a background job (5 steps)
+        const jobId = await createJob('issue_nft', 5, {
+            recipientId, title, description, department,
+            fileName: file.originalname
+        }, req.user ? req.user.id : null);
 
-        // --- 3. Retrieve Student's Wallet Address and Email ---
-        // We fetch the 'ethereum_address' and email for notification.
+        // Return jobId immediately — DON'T await the pipeline
+        res.status(202).json({ jobId, message: 'Issuance started. Poll /api/job-status/' + jobId });
+
+        // Fire the pipeline asynchronously (no await!)
+        runIssuancePipeline(jobId, {
+            recipientId, title, description, department,
+            file, issueDate: req.body.issueDate,
+            adminId: req.user ? req.user.id : null,
+            req // pass for activity logging
+        }).catch(err => {
+            console.error(`[Pipeline] Unhandled error in job ${jobId}:`, err);
+            failJob(jobId, err.message || 'Unexpected pipeline error');
+        });
+
+    } catch (error) {
+        console.error("Start Issuance Error:", error);
+        if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+        res.status(500).json({ error: error.message || "Failed to start issuance." });
+    }
+}
+
+/**
+ * Runs the full NFT issuance pipeline in the background.
+ * Updates the jobs table after each step so the frontend can poll progress.
+ */
+async function runIssuancePipeline(jobId, params) {
+    const { recipientId, title, description, department, file, issueDate, adminId, req } = params;
+
+    try {
+        // --- Step 1: Fetch student wallet ---
+        await updateJobStep(jobId, 1, 'Fetching student wallet...', 10);
+
         const { data: student, error: studentError } = await supabase
             .from('students')
             .select('ethereum_address, email, full_name')
             .eq('id', recipientId)
             .single();
 
-        if (studentError || !student) {
-            console.error("Student Lookup Error:", studentError);
-            return res.status(404).json({ error: "Student not found." });
-        }
-        
+        if (studentError || !student) throw new Error('Student not found.');
         const toAddress = student.ethereum_address;
+        if (!toAddress) throw new Error('Student does not have a wallet address set.');
 
-        if (!toAddress) {
-            return res.status(400).json({ error: "Student does not have a wallet address set." });
-        }
+        // --- Step 2: Upload certificate to IPFS ---
+        await updateJobStep(jobId, 2, 'Pinning certificate to IPFS...', 25);
 
-        // --- 4. Upload Certificate Image to Pinata (IPFS) ---
-        // Pining ensures the file persists on the decentralized web.
         const imageHash = await pinFileToIPFS(file.path);
-        // Delete the temporary local file once it's successfully uploaded to IPFS
-        fs.unlinkSync(file.path); 
-        console.log(`[NFT Issue] Image pinned: ${imageHash}`);
+        fs.unlinkSync(file.path); // Cleanup temp file
+        console.log(`[Pipeline ${jobId}] Image pinned: ${imageHash}`);
 
-        // --- 5. Create and Upload Metadata JSON to Pinata ---
-        // Following the OpenSea/ERC-711 Metadata Standard for interoperability.
+        // --- Step 3: Upload metadata to IPFS ---
+        await updateJobStep(jobId, 3, 'Pinning metadata to IPFS...', 45);
+
         const metadata = {
             name: title,
             description: description || "Issued by University Management System",
-            image: `ipfs://${imageHash}`, // Link to the image pinned in Step 4
+            image: `ipfs://${imageHash}`,
             attributes: [
                 { trait_type: "Issuer", value: "University Admin" },
                 { trait_type: "Department", value: department || "General" },
-                { trait_type: "Date", value: req.body.issueDate ? new Date(req.body.issueDate).toISOString() : new Date().toISOString() }
+                { trait_type: "Date", value: issueDate ? new Date(issueDate).toISOString() : new Date().toISOString() }
             ]
         };
         const metadataHash = await pinJSONToIPFS(metadata);
-        const tokenURI = `ipfs://${metadataHash}`; // This URI is what gets stored on-chain
-        console.log(`[NFT Issue] Metadata pinned: ${tokenURI}`);
+        const tokenURI = `ipfs://${metadataHash}`;
+        console.log(`[Pipeline ${jobId}] Metadata pinned: ${tokenURI}`);
 
-        // --- 6. Minting Transaction on Blockchain ---
-        // This process calls the smart contract and transfers ownership to the student.
-        // It uses the administrative private key to authorize the transaction.
+        // --- Step 4: Mint NFT on blockchain ---
+        await updateJobStep(jobId, 4, 'Minting NFT on blockchain...', 65);
+
         const mintResult = await mintNFT(toAddress, tokenURI);
-        console.log(`[NFT Issue] Minted Token ID: ${mintResult.tokenId} (Tx: ${mintResult.transactionHash})`);
+        console.log(`[Pipeline ${jobId}] Minted Token ID: ${mintResult.tokenId}`);
 
-        // --- 7. Save Records to Database ---
-        
-        // A. Insert human-readable certificate details
+        // --- Step 5: Save to database + send email ---
+        await updateJobStep(jobId, 5, 'Saving records & sending notification...', 85);
+
+        // Insert certificate record
         const { data: cert, error: certError } = await supabase
             .from('certificates')
             .insert([{
-                recipient_id: recipientId, 
-                title, 
-                description: description || "", 
+                recipient_id: recipientId,
+                title,
+                description: description || "",
                 department: department || "General",
-                issue_date: req.body.issueDate ? new Date(req.body.issueDate) : new Date()
+                issue_date: issueDate ? new Date(issueDate) : new Date()
             }])
             .select()
             .single();
 
         if (certError) throw new Error(`Certificate DB Error: ${certError.message}`);
-        
-        const certificateId = cert.id;
 
-        // B. Link the minted NFT details (Transaction Hash, Token ID) to the Certificate record
+        // Insert NFT record
         const { error: nftError } = await supabase
             .from('nfts')
             .insert([{
-                certificate_id: certificateId,
+                certificate_id: cert.id,
                 token_id: parseInt(mintResult.tokenId),
                 transaction_hash: mintResult.transactionHash,
                 ipfs_cid: tokenURI
@@ -118,13 +137,117 @@ async function issueNFT(req, res) {
         // Log Activity
         const { logActivity } = require('../services/activityLogger');
         logActivity({
-            adminId: req.user ? req.user.id : null, // Assuming req.user is populated by middleware
+            adminId: adminId,
             action: 'ISSUE_CERTIFICATE',
             details: `Issued '${title}' to student ID ${recipientId} (Token #${mintResult.tokenId})`,
             req
         });
 
-        // --- 8. Send Certificate Notification Email (non-blocking) ---
+        // Send email (non-blocking)
+        if (student.email) {
+            sendCertificateIssuedEmail({
+                email: student.email,
+                studentName: student.full_name || 'Student',
+                certificateTitle: title,
+                tokenId: mintResult.tokenId,
+                transactionHash: mintResult.transactionHash,
+                department: department || 'General'
+            }).catch(err => console.warn('Certificate email failed:', err));
+        }
+
+        // --- Complete! ---
+        await completeJob(jobId, {
+            certificateId: cert.id,
+            tokenId: mintResult.tokenId,
+            transactionHash: mintResult.transactionHash,
+            ipfsCid: tokenURI
+        });
+
+        console.log(`[Pipeline ${jobId}] ✅ Issuance complete!`);
+
+    } catch (error) {
+        console.error(`[Pipeline ${jobId}] ❌ Failed:`, error.message);
+        // Cleanup temp file if it still exists
+        if (file && fs.existsSync(file.path)) fs.unlinkSync(file.path);
+        await failJob(jobId, error.message || 'Pipeline failed');
+    }
+}
+
+/**
+ * Controller: issueNFT (LEGACY — Synchronous version)
+ * Kept for backward compatibility with batch operations.
+ * Manages the entire lifecycle synchronously in one request-response.
+ */
+async function issueNFT(req, res) {
+    try {
+        const { recipientId, title, description, department } = req.body;
+        const file = req.file;
+
+        if (!file) return res.status(400).json({ error: "Certificate file is required." });
+        if (!recipientId) return res.status(400).json({ error: "Student (Recipient) is required." });
+        if (!title) return res.status(400).json({ error: "Certificate Title is required." });
+
+        console.log(`[NFT Issue] Starting issuance for Student ID: ${recipientId}, Title: ${title}`);
+
+        const { data: student, error: studentError } = await supabase
+            .from('students')
+            .select('ethereum_address, email, full_name')
+            .eq('id', recipientId)
+            .single();
+
+        if (studentError || !student) return res.status(404).json({ error: "Student not found." });
+        const toAddress = student.ethereum_address;
+        if (!toAddress) return res.status(400).json({ error: "Student does not have a wallet address set." });
+
+        const imageHash = await pinFileToIPFS(file.path);
+        fs.unlinkSync(file.path);
+
+        const metadata = {
+            name: title,
+            description: description || "Issued by University Management System",
+            image: `ipfs://${imageHash}`,
+            attributes: [
+                { trait_type: "Issuer", value: "University Admin" },
+                { trait_type: "Department", value: department || "General" },
+                { trait_type: "Date", value: req.body.issueDate ? new Date(req.body.issueDate).toISOString() : new Date().toISOString() }
+            ]
+        };
+        const metadataHash = await pinJSONToIPFS(metadata);
+        const tokenURI = `ipfs://${metadataHash}`;
+
+        const mintResult = await mintNFT(toAddress, tokenURI);
+
+        const { data: cert, error: certError } = await supabase
+            .from('certificates')
+            .insert([{
+                recipient_id: recipientId, title,
+                description: description || "",
+                department: department || "General",
+                issue_date: req.body.issueDate ? new Date(req.body.issueDate) : new Date()
+            }])
+            .select().single();
+
+        if (certError) throw new Error(`Certificate DB Error: ${certError.message}`);
+
+        const { error: nftError } = await supabase
+            .from('nfts')
+            .insert([{
+                certificate_id: cert.id,
+                token_id: parseInt(mintResult.tokenId),
+                transaction_hash: mintResult.transactionHash,
+                ipfs_cid: tokenURI
+            }]);
+
+        if (nftError) throw new Error(`NFT DB Error: ${nftError.message}`);
+
+        const { logActivity } = require('../services/activityLogger');
+        logActivity({
+            adminId: req.user ? req.user.id : null,
+            action: 'ISSUE_CERTIFICATE',
+            details: `Issued '${title}' to student ID ${recipientId} (Token #${mintResult.tokenId})`,
+            req
+        });
+
         if (student.email) {
             sendCertificateIssuedEmail({
                 email: student.email,
@@ -138,14 +261,9 @@ async function issueNFT(req, res) {
             });
         }
 
-        // --- 9. Final Success Response ---
         res.status(201).json({
             message: "NFT issued successfully!",
-            certificate: {
-                id: certificateId,
-                title: title,
-                recipientId: recipientId
-            },
+            certificate: { id: cert.id, title, recipientId },
             nft: {
                 tokenId: mintResult.tokenId,
                 transactionHash: mintResult.transactionHash,
@@ -155,7 +273,6 @@ async function issueNFT(req, res) {
 
     } catch (error) {
         console.error("Issue NFT Error:", error);
-        // Attempt to clean up temp file if an error occurs mid-process
         if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
         res.status(500).json({ error: error.message || "Failed to issue NFT." });
     }
@@ -178,5 +295,5 @@ async function getWalletInfo(req, res) {
 }
 
 // Export function as a module
-module.exports = { issueNFT, getWalletInfo };
+module.exports = { issueNFT, startIssuance, getWalletInfo };
 
