@@ -38,6 +38,8 @@ const { csrfProtection, getCsrfToken } = require("./middleware/csrfProtection");
 
 // Import Wallet Controller
 const walletController = require("./controllers/walletController");
+// Import TTS Controller
+const { tts } = require("./controllers/ttsController");
 
 // Create Express application instance
 const app = express();
@@ -100,6 +102,9 @@ app.get('/api/csrf-token', getCsrfToken);
 app.get('/api/ping', (req, res) => {
   res.json({ status: 'alive', timestamp: new Date().toISOString() });
 });
+
+// --- PUBLIC NEURAL TTS PROXY ---
+app.get('/api/public/tts', tts);
 
 // --- API ROUTES ---
 
