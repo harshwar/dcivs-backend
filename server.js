@@ -235,7 +235,8 @@ app.get("/api/certificates", authenticateToken, requireAdmin, async (req, res) =
             description: c.description,
             issue_date: c.issue_date,
             student: c.student || null,
-            nft: c.nft?.[0] || null // nft is returned as array, take first
+            // Robustly handle single object vs array returned by PostgREST
+            nft: Array.isArray(c.nft) ? c.nft[0] : (c.nft || null)
         }));
 
         res.json(mappedResults);

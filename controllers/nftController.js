@@ -445,6 +445,7 @@ async function runBatchIssuancePipeline(jobId, params) {
 
                 results.issued.push({
                     studentId: rec.student_id,
+                    filename: originalFilename,
                     tokenId: mintResult.tokenId,
                     transactionHash: mintResult.transactionHash
                 });
@@ -454,6 +455,7 @@ async function runBatchIssuancePipeline(jobId, params) {
                 if (tempImagePath && fs.existsSync(tempImagePath)) fs.unlinkSync(tempImagePath);
                 results.failed.push({
                     studentId: rec.student_id,
+                    filename: originalFilename,
                     error: err.message
                 });
             }
