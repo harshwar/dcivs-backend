@@ -68,22 +68,36 @@ async function mintNFT(toAddress, tokenURI) {
         const tx = await contract.safeMint(toAddress, tokenURI);
         const receipt = await tx.wait();
 
-        // Extract Token ID from Transfer event
-        const transferEvent = receipt.logs.find(log => {
+        // Extract Token ID from Transfer event reliably using raw EVM topics
+        const TRANSFER_TOPIC = ethers.id("Transfer(address,address,uint256)");
+        const transferLog = receipt.logs.find(l => l.topics[0] === TRANSFER_TOPIC);
+        
+        let extractedTokenId = null;
+        if (transferLog) {
+            // In standard ERC721, tokenId is the 3rd indexed parameter (topics[3])
+            if (transferLog.topics.length >= 4) {
+                extractedTokenId = BigInt(transferLog.topics[3]).toString();
+            } 
+            // If the contract didn't index tokenId, it will be in the data payload
+            else if (transferLog.data && transferLog.data !== '0x') {
+                extractedTokenId = BigInt(transferLog.data).toString();
+            }
+        }
+        
+        // Ultimate fallback: Query the contract's current token ID counter
+        if (!extractedTokenId) {
             try {
-                const parsed = contract.interface.parseLog(log);
-                return parsed.name === 'Transfer';
-            } catch (e) { return false; }
-        });
-
-        const tokenId = transferEvent 
-            ? contract.interface.parseLog(transferEvent).args.tokenId.toString() 
-            : null;
+                const currentId = await contract.getCurrentTokenId();
+                extractedTokenId = currentId.toString();
+            } catch (e) {
+                console.warn("Could not fetch fallback token ID:", e.message);
+            }
+        }
 
         return {
             success: true,
             transactionHash: receipt.hash,
-            tokenId: tokenId
+            tokenId: extractedTokenId
         };
     } catch (error) {
         console.error("Blockchain Minting Error:", error);
