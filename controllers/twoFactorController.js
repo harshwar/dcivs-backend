@@ -2,6 +2,7 @@
  * Two-Factor Authentication Controller (TOTP)
  * Handles 2FA setup, verification, validation during login, and disabling.
  * Uses speakeasy for TOTP and qrcode for QR generation.
+ * Supports both students (students table) and admins (admins table).
  */
 const speakeasy = require('speakeasy');
 const QRCode = require('qrcode');
@@ -14,17 +15,27 @@ const { sendSecurityAlertEmail } = require('../services/emailService');
 const JWT_SECRET = process.env.JWT_SECRET || 'change_this_secret';
 
 /**
+ * Helper: get the right table and password field based on role.
+ */
+function getTableConfig(role) {
+  if (role === 'admin' || role === 'super_admin') {
+    return { table: 'admins', passwordField: 'password_hash' };
+  }
+  return { table: 'students', passwordField: 'password' };
+}
+
+/**
  * POST /api/auth/2fa/setup
- * Generate TOTP secret and QR code for initial setup
+ * Generate TOTP secret and QR code for initial setup.
  * Requires: JWT auth (logged in)
  */
 async function setup2FA(req, res) {
   try {
     const userId = req.user.id;
+    const { table } = getTableConfig(req.user.role);
 
-    // Check if 2FA is already enabled
     const { data: user } = await supabase
-      .from('students')
+      .from(table)
       .select('email, totp_enabled')
       .eq('id', userId)
       .single();
@@ -34,14 +45,14 @@ async function setup2FA(req, res) {
 
     // Generate secret
     const secret = speakeasy.generateSecret({
-      name: `UniNFT:${user.email}`,
-      issuer: 'University NFT System',
+      name: `DCIVS:${user.email}`,
+      issuer: 'DCIVS',
       length: 20
     });
 
     // Store secret temporarily (not enabled yet — will be saved on verify)
     await supabase
-      .from('students')
+      .from(table)
       .update({ totp_secret: secret.base32 })
       .eq('id', userId);
 
@@ -62,7 +73,7 @@ async function setup2FA(req, res) {
 
 /**
  * POST /api/auth/2fa/verify-setup
- * Verify the first TOTP code and enable 2FA
+ * Verify the first TOTP code and enable 2FA.
  * Body: { token: "123456" }
  * Requires: JWT auth
  */
@@ -70,13 +81,13 @@ async function verifySetup2FA(req, res) {
   try {
     const userId = req.user.id;
     const { token } = req.body;
+    const { table } = getTableConfig(req.user.role);
 
     if (!token) return res.status(400).json({ error: 'Verification code is required.' });
 
-    // Get stored secret
     const { data: user } = await supabase
-      .from('students')
-      .select('totp_secret, totp_enabled')
+      .from(table)
+      .select('email, totp_secret, totp_enabled')
       .eq('id', userId)
       .single();
 
@@ -89,7 +100,7 @@ async function verifySetup2FA(req, res) {
       secret: user.totp_secret,
       encoding: 'base32',
       token: token,
-      window: 1 // Allow 1 step tolerance (30 sec before/after)
+      window: 1
     });
 
     if (!verified) {
@@ -104,18 +115,18 @@ async function verifySetup2FA(req, res) {
 
     // Enable 2FA and save recovery codes
     await supabase
-      .from('students')
+      .from(table)
       .update({
         totp_enabled: true,
         recovery_codes: JSON.stringify(recoveryCodes)
       })
       .eq('id', userId);
 
-    // --- Send Security Alert ---
+    // Send Security Alert
     try {
       await sendSecurityAlertEmail({
         email: user.email,
-        full_name: user.full_name || 'User',
+        full_name: user.full_name || user.username || 'User',
         action: 'Two-Factor Authentication Enabled',
         details: 'TOTP-based 2FA has been successfully configured for your account.'
       });
@@ -137,7 +148,7 @@ async function verifySetup2FA(req, res) {
 
 /**
  * POST /api/auth/2fa/validate
- * Validate TOTP code during login (after password success)
+ * Validate TOTP code during login (after password success).
  * Body: { tempToken, code } OR { tempToken, recoveryCode }
  */
 async function validate2FA(req, res) {
@@ -159,10 +170,16 @@ async function validate2FA(req, res) {
       return res.status(400).json({ error: 'Invalid token type.' });
     }
 
-    // Get user with 2FA data
+    // Determine which table to check based on role in the temp token
+    const { table } = getTableConfig(decoded.role);
+
+    const selectFields = table === 'admins'
+      ? 'id, email, username, totp_secret, recovery_codes, role'
+      : 'id, email, full_name, totp_secret, recovery_codes, wallet_pin_set';
+
     const { data: user } = await supabase
-      .from('students')
-      .select('id, email, full_name, totp_secret, recovery_codes, wallet_pin_set')
+      .from(table)
+      .select(selectFields)
       .eq('id', decoded.id)
       .single();
 
@@ -171,7 +188,6 @@ async function validate2FA(req, res) {
     let valid = false;
 
     if (code) {
-      // Verify TOTP code
       valid = speakeasy.totp.verify({
         secret: user.totp_secret,
         encoding: 'base32',
@@ -179,17 +195,15 @@ async function validate2FA(req, res) {
         window: 1
       });
     } else if (recoveryCode) {
-      // Verify recovery code
       const codes = JSON.parse(user.recovery_codes || '[]');
       const upperCode = recoveryCode.toUpperCase().trim();
       const idx = codes.indexOf(upperCode);
 
       if (idx !== -1) {
         valid = true;
-        // Remove used recovery code
         codes.splice(idx, 1);
         await supabase
-          .from('students')
+          .from(table)
           .update({ recovery_codes: JSON.stringify(codes) })
           .eq('id', user.id);
       }
@@ -199,32 +213,46 @@ async function validate2FA(req, res) {
       return res.status(401).json({ error: 'Invalid verification code.' });
     }
 
-    // Issue real JWT
-    const realToken = jwt.sign(
-      { id: user.id, email: user.email },
-      JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
-    );
+    // Issue real JWT — include role for admins
+    const tokenPayload = table === 'admins'
+      ? { id: user.id, email: user.email, role: user.role || 'admin' }
+      : { id: user.id, email: user.email, role: 'student' };
+
+    const realToken = jwt.sign(tokenPayload, JWT_SECRET, {
+      expiresIn: process.env.JWT_EXPIRES_IN || '7d'
+    });
 
     // Log activity
     try {
       const { logActivity } = require('../services/activityLogger');
-      logActivity({
-        userId: user.id,
+      const logPayload = {
         action: 'LOGIN_2FA',
         details: recoveryCode ? 'Login via 2FA recovery code' : 'Login via 2FA TOTP code',
         req
-      });
+      };
+      if (table === 'admins') logPayload.adminId = user.id;
+      else logPayload.userId = user.id;
+      logActivity(logPayload);
     } catch (e) { /* non-critical */ }
 
-    // Check if user has any passkeys registered
+    if (table === 'admins') {
+      return res.json({
+        message: 'Login successful.',
+        token: realToken,
+        user: {
+          id: user.id,
+          email: user.email,
+          full_name: user.username || 'Admin',
+          role: user.role || 'admin'
+        }
+      });
+    }
+
+    // Student path — check passkeys
     const { count: passkeyCount } = await supabase
       .from('passkeys')
       .select('id', { count: 'exact', head: true })
       .eq('user_id', user.id);
-
-    // Get wallet_pin_set status (already selected in query below, but let's make sure it is in the select)
-    // Wait, let's update the select on line 163 first.
 
     res.json({
       message: 'Login successful.',
@@ -246,7 +274,7 @@ async function validate2FA(req, res) {
 
 /**
  * POST /api/auth/2fa/disable
- * Disable 2FA (requires current password)
+ * Disable 2FA (requires current password).
  * Body: { password }
  * Requires: JWT auth
  */
@@ -254,13 +282,13 @@ async function disable2FA(req, res) {
   try {
     const userId = req.user.id;
     const { password } = req.body;
+    const { table, passwordField } = getTableConfig(req.user.role);
 
     if (!password) return res.status(400).json({ error: 'Password is required to disable 2FA.' });
 
-    // Get user
     const { data: user } = await supabase
-      .from('students')
-      .select('id, password, totp_enabled')
+      .from(table)
+      .select(`id, email, ${passwordField}, totp_enabled`)
       .eq('id', userId)
       .single();
 
@@ -268,12 +296,12 @@ async function disable2FA(req, res) {
     if (!user.totp_enabled) return res.status(400).json({ error: '2FA is not enabled.' });
 
     // Verify password
-    const isMatch = await bcrypt.compare(password, user.password);
+    const isMatch = await bcrypt.compare(password, user[passwordField]);
     if (!isMatch) return res.status(401).json({ error: 'Incorrect password.' });
 
     // Disable 2FA
     await supabase
-      .from('students')
+      .from(table)
       .update({
         totp_enabled: false,
         totp_secret: null,
@@ -281,11 +309,11 @@ async function disable2FA(req, res) {
       })
       .eq('id', userId);
 
-    // --- Send Security Alert ---
+    // Send Security Alert
     try {
       await sendSecurityAlertEmail({
         email: user.email,
-        full_name: user.full_name || 'User',
+        full_name: user.full_name || user.username || 'User',
         action: 'Two-Factor Authentication Disabled',
         details: 'Two-factor authentication has been deactivated for your account.'
       });

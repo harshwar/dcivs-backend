@@ -391,8 +391,8 @@ async function login(req, res) {
       });
     }
 
-    // Generate JWT token for valid login (no 2FA)
-    const token = signToken({ id: user.id, email: user.email });
+    // Generate JWT token for valid login (no 2FA) — explicitly set role: 'student'
+    const token = signToken({ id: user.id, email: user.email, role: 'student' });
 
     // Log Student Login
     const { logActivity } = require('../services/activityLogger');
