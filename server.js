@@ -155,33 +155,53 @@ app.post("/api/auth/2fa/disable", authenticateToken, disable2FA);
 // Private route to get current user's profile
 app.get("/api/auth/me", authenticateToken, async (req, res) => {
   try {
-      // Fetch basic student info from DB using ID from middleare
-      const student = await getStudentById(req.user.id);
-      if (!student) return res.status(404).json({ error: "User not found." });
-      
-      // Fetch extended profile details
-      const { data: fullProfile, error } = await supabase
-          .from('students')
-          .select('id, full_name, email, student_id_number, course_name, year, ethereum_address, totp_enabled, wallet_pin_set, is_verified, created_at')
-          .eq('id', req.user.id)
-          .single();
-      
-      if (error) throw error;
-      
-      // Check if user has any passkeys
+    const isAdmin = req.user.role === 'admin' || req.user.role === 'super_admin';
+
+    if (isAdmin) {
+      // Admin profile from admins table
+      const { data: admin, error } = await supabase
+        .from('admins')
+        .select('id, username, email, role, totp_enabled, created_at')
+        .eq('id', req.user.id)
+        .single();
+
+      if (error || !admin) return res.status(404).json({ error: 'Admin not found.' });
+
+      // Count admin passkeys
       const { count: passkeyCount } = await supabase
         .from('passkeys')
         .select('id', { count: 'exact', head: true })
-        .eq('user_id', req.user.id);
+        .eq('admin_id', req.user.id);
 
-      // Respond with the full profile object
-      res.json({
-        ...fullProfile,
+      return res.json({
+        ...admin,
+        full_name: admin.username, // normalise key for frontend
         has_passkeys: (passkeyCount || 0) > 0
       });
+    }
+
+    // Student profile from students table
+    const { data: fullProfile, error } = await supabase
+        .from('students')
+        .select('id, full_name, email, student_id_number, course_name, year, ethereum_address, totp_enabled, wallet_pin_set, is_verified, created_at')
+        .eq('id', req.user.id)
+        .single();
+
+    if (error || !fullProfile) return res.status(404).json({ error: 'User not found.' });
+
+    // Check if student has any passkeys
+    const { count: passkeyCount } = await supabase
+      .from('passkeys')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', req.user.id);
+
+    res.json({
+      ...fullProfile,
+      has_passkeys: (passkeyCount || 0) > 0
+    });
   } catch (error) {
-      console.error("Error fetching me:", error);
-      res.status(500).json({ error: "Failed to fetch profile." });
+    console.error("Error fetching me:", error);
+    res.status(500).json({ error: "Failed to fetch profile." });
   }
 });
 
