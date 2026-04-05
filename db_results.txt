@@ -1,0 +1,1 @@
+DB Error: Error: getaddrinfo ENOTFOUND db.utlmbyoavdpmqsbkwbwe.supabase.co
