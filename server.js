@@ -1,3 +1,4 @@
+//For code rabbit 2
 // Load environment variables from .env file
 require("dotenv").config();
 // Initialize Express framework
